@@ -1,0 +1,7 @@
+# Pinned extras installed by 01_data.ipynb / 02_preprocess.ipynb on top of the Colab image.
+# Colab-preinstalled packages (numpy, pandas, pyarrow, huggingface_hub, pytest) are NOT
+# re-pinned here because downgrading them breaks the Colab runtime; their exact versions
+# are recorded per run in <root>/logs/env_*.json and pip_freeze_*.txt (the lock evidence).
+PyYAML==6.0.2
+pyarabic==0.6.15
+datasketch==1.6.5

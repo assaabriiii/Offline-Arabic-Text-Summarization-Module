@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arabic_summ"
+version = "0.1.0"
+description = "Offline Arabic abstractive summarization module (Phase 1 MVP)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+# Core deps only; heavy ML deps are installed per-notebook from requirements/*.txt
+# so the package stays importable on a bare CPU box for tests.
+dependencies = [
+    "PyYAML>=6.0",
+    "pyarabic>=0.6.15",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+data = ["datasketch>=1.6.5", "huggingface_hub>=0.23"]
+test = ["pytest>=8", "datasketch>=1.6.5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

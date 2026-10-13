@@ -1,0 +1,91 @@
+# Single source of settings for every notebook / script.
+# Override per environment with a second YAML (deep-merged) or with
+#   load_config("configs/default.yaml", overrides={"paths": {"root": "..."}}).
+# Relative paths under `paths` are resolved against `paths.root`.
+
+project:
+  name: arabic_summ
+  seed: 42
+
+paths:
+  root: /content/drive/MyDrive/arabic_summ   # Google Drive root for all artifacts
+  raw: data/raw
+  processed: data/processed
+  benchmark: data/benchmark
+  logs: logs
+  markers: state            # step-completion markers (resumability)
+  scratch: /content/scratch/arabic_summ   # fast local disk for re-creatable temp files
+
+# ---------------------------------------------------------------- data (01)
+xlsum:
+  repo_id: csebuetnlp/xlsum
+  # Pinned dataset commit (HF dataset repo). Recorded in data_manifest.json.
+  revision: 30fece425f9a3866e04321773ca7a80056d55ca6
+  archive: data/arabic_XLSum_v2.0.tar.bz2
+  # SHA256 of the archive as published by the Hub (LFS etag). Download is rejected on mismatch.
+  archive_sha256: 371a07df0f89d83c2ca330f56ba33cc4cd39c1b532d6886910c97dfbacfdf2b7
+  license: CC BY-NC-SA 4.0
+  license_url: https://creativecommons.org/licenses/by-nc-sa/4.0/
+  # Official split sizes stated in the proposal; a mismatch is reported (not fatal).
+  expected_counts: {train: 37519, validation: 4689, test: 4689}
+
+dedup:
+  shingle_size: 5            # word n-gram size for near-duplicate shingles
+  num_perm: 128              # MinHash permutations
+  near_dup_threshold: 0.8    # estimated Jaccard >= this => near-duplicate
+  # Official validation/test splits are never modified (comparability with published
+  # results); duplicates there are only reported. Train copies of eval docs are removed.
+  modify_eval_splits: false
+  min_text_words: 20         # drop rows with (near-)empty article text
+  min_summary_words: 3
+
+# ------------------------------------------------------- internal benchmark
+benchmark:
+  domains: [news, org_report]
+  min_per_domain: 120        # >= 240 total, balanced
+  input_min_words: 300
+  input_max_words: 1000
+  # News half is drawn from XL-Sum *test* articles (never trained on), stratified by
+  # length so both latency bands (300-700, 700-1000) are covered. Candidates are
+  # oversampled so annotators can reject unsuitable texts.
+  news_candidates: 150
+  length_bins: [300, 500, 700, 1001]
+  # Reference-summary length rules (see docs/reference_guideline.md).
+  reference_target_ratio: 0.20
+  reference_ratio_tolerance: 0.05   # guideline asks for 15-25 % ...
+  reference_hard_min_ratio: 0.10    # ... validation hard-fails outside 10-30 %
+  reference_hard_max_ratio: 0.30
+  reference_min_words: 30
+  reference_max_words: 300
+  min_key_points: 3
+  guideline_version: "1.0"
+  min_arabic_ratio: 0.6      # share of letters that must be Arabic script
+
+# ------------------------------------------------------- normalization (02)
+normalization:
+  # Light policy applied to model input/output: must keep text well-spelled.
+  model:
+    unicode_form: NFKC         # folds Arabic presentation forms / lam-alef ligatures
+    remove_tatweel: true
+    diacritics: strip          # strip | keep
+    fold_persian_variants: true # ی ک -> ي ك (keyboard-encoding variants, not spelling)
+    unify_alef: false          # أ إ آ ٱ -> ا
+    alef_maqsura_to_yeh: false # ى -> ي
+    teh_marbuta_to_heh: false  # ة -> ه
+    digits: keep               # keep | ascii   (Arabic-Indic / Persian digits)
+    remove_control_chars: true # Cc (except \n \t), Cf (bidi marks, ZWJ/ZWNJ, BOM), Co, Cn
+    collapse_whitespace: true
+  # Aggressive policy for hashing, dedup, ROUGE tokenization and fact matching only.
+  matching:
+    unicode_form: NFKC
+    remove_tatweel: true
+    diacritics: strip
+    fold_persian_variants: true
+    unify_alef: true
+    alef_maqsura_to_yeh: true
+    teh_marbuta_to_heh: true
+    digits: ascii
+    remove_control_chars: true
+    collapse_whitespace: true
+    remove_punctuation: true
+    lowercase_latin: true

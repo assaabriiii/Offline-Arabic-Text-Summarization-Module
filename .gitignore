@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- project-specific ---
+# Funding proposal contains personal contact details: keep out of git.
+docs/proposal.pdf
+# Data, models and run outputs live on Google Drive, never in the repo.
+/data/
+/runs/
+/models/
+*.onnx
+*.safetensors
+*.bin
