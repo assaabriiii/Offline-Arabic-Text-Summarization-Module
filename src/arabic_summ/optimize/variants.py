@@ -25,13 +25,16 @@ def model_dir_for(variant: str, torch_dir: Path, onnx_root: Path) -> Path:
     return Path(onnx_root) / ("int8" if v["quantize"] else "fp32")
 
 
-def load_backend(variant: str, model_dir: str | Path, num_threads: int | None, max_input_tokens: int = 1024):
+def load_backend(variant: str, model_dir: str | Path, num_threads: int | None, max_input_tokens: int = 1024,
+                 device: str = "cpu"):
+    """Batch size 1 (proposal reference test). `device` only applies to torch_fp32 (GPU for quality-only runs)."""
     v = VARIANTS[variant]
     if v["runtime"] == "torch":
         from ..backends.hf import HFBackend
 
-        return HFBackend(str(model_dir), device="cpu", dtype="float32", batch_size=1, local_files_only=True,
-                         num_threads=num_threads, quantize=v["quantize"], max_input_tokens=max_input_tokens)
+        return HFBackend(str(model_dir), device=device if not v["quantize"] else "cpu", dtype="float32",
+                         batch_size=1, local_files_only=True, num_threads=num_threads, quantize=v["quantize"],
+                         max_input_tokens=max_input_tokens)
     from ..backends.ort import ORTBackend
 
     return ORTBackend(str(model_dir), max_input_tokens=max_input_tokens, batch_size=1, num_threads=num_threads)

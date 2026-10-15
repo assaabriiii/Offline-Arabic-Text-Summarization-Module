@@ -124,3 +124,35 @@ def test_ratio_is_clamped_and_model_needed():
     assert r.ratio == 0.3
     with pytest.raises(ValueError):
         s.summarize("نص.", strategy="segmentwise")
+
+
+def test_lead_skips_overlong_sentence_instead_of_stopping_short():
+    from arabic_summ.summarize import extractive
+
+    wc = [30, 60, 20, 20, 20]          # target 70, hard max 80: sentence 1 (60) would overflow
+    assert extractive.lead(wc, 70) == [0]                          # old behaviour without a hard cap
+    assert extractive.lead(wc, 70, max_words=80) == [0, 2, 3]       # 70 words, inside bounds
+
+
+def test_trim_to_words_fills_to_minimum_at_word_boundary():
+    from arabic_summ.summarize.postprocess import trim_to_words
+    from arabic_summ.text.words import count_words
+
+    sents = ["أ ب ج د", "ه و ز ح ط ي ك ل م ن"]
+    out = trim_to_words(sents, max_words=8, min_words=6)
+    assert out[0] == "أ ب ج د" and count_words(" ".join(out)) == 6
+    assert trim_to_words(sents, max_words=8) == ["أ ب ج د"]
+
+
+def test_lead_and_extractive_respect_length_bounds_on_short_sentence_texts():
+    from arabic_summ.config import load_config
+    from arabic_summ.summarize.pipeline import Summarizer
+
+    cfg = load_config("configs/default.yaml")
+    long = " ".join(["كلمة"] * 70) + "."
+    short = "جملة قصيرة هنا للتجربة فقط."
+    text = " ".join([short, long] + [short] * 60)
+    sm = Summarizer(cfg)
+    for st in ("lead", "extractive"):
+        r = sm.summarize(text, strategy=st)
+        assert r.length_ok, (st, r.output_words, r.bounds)

@@ -656,7 +656,203 @@ print("machine:", next(iter(results.values()))["machine"], "| dry run:", DRY_RUN
     return notebook(cells)
 
 
-NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03, "04_optimize.ipynb": nb04}
+def nb05() -> dict:
+    cells = [md('''
+# 05 · Evaluation on the internal benchmark (240 texts) + blind human evaluation
+
+**What this does** (proposal §7 acceptance criteria and stage 6)
+1. Loads the benchmark and references. `evaluate.approved_only: false` uses every drafted reference and labels the
+   numbers **interim**; set it to `true` for the final report (only human-approved, model-drafted references).
+2. Runs each system over the 240 texts (resumable JSONL per system): `lead`, `extractive`, the public baseline, the
+   fine-tuned model with the **primary strategy fixed in config before scoring** (`segmentwise`) plus ablations
+   (`direct`, `hybrid`), and the optimized CPU variant from 04 on CPU (latency).
+3. Scores ROUGE-1/2/L F1 (bootstrap 95 % CI), length compliance, compression ratio and the automatic fact check, by
+   domain and length band; paired CI of fine-tuned vs baseline; latency by band (300–700 / 300–1000 words);
+   optional BERTScore.
+4. Writes **blind human-evaluation sheets** (100 outputs, 50 per domain; two raters; 20 calibration items for the
+   reference rater) and, once filled, computes weighted Cohen's kappa, the third-rater list and final scores.
+5. Prints the **acceptance table** and writes `logs/05_evaluate/report.md` + `report.json`.
+
+**Runtime: T4 GPU** recommended (the model systems run on GPU for quality; the optimized CPU system always runs on
+CPU for latency). Colab's 2 vCPUs are not the reference machine: the acceptance latency comes from `bench/`.
+'''), *setup_cells("05_evaluate", "requirements/colab-data.txt"), code('''
+# ==== 3. Benchmark, references and systems ============================================
+import json, os, subprocess, sys
+from pathlib import Path
+import pandas as pd, torch
+from arabic_summ import config as C, models as M
+from arabic_summ.data import prepare, benchmark as B
+from arabic_summ.eval import benchmark_eval as BE, facts as F, human as H
+from arabic_summ.eval.stats import paired_diff_ci
+from arabic_summ.io_utils import read_json, write_json
+from arabic_summ.optimize.variants import VARIANTS
+EV, SEED = cfg["evaluate"], cfg["project"]["seed"]
+OUT = C.path(cfg, "logs", "05_evaluate", "outputs", "x").parent
+REP = OUT.parent
+items = B.read_csv(C.path(cfg, "benchmark") / B.ITEMS_FILE)
+items = items[items.status == "selected"]
+refs = B.read_csv(C.path(cfg, "benchmark") / B.REFS_FILE)
+SOURCES = dict(zip(items.sample_id, items.text))
+R = BE.reference_table(refs[refs.sample_id.isin(SOURCES)], EV["approved_only"])
+INTERIM = not EV["approved_only"]
+print(f"{len(items)} texts | references used: {len(R)} | by review_status: {R.review_status.value_counts().to_dict()}"
+      f" | by source: {R.reference_source.value_counts().to_dict()} | {'INTERIM' if INTERIM else 'FINAL'}")
+
+ENV = {**os.environ, "PYTHONPATH": f"{REPO_DIR}/src"}
+GPU = "cuda" if torch.cuda.is_available() else "cpu"
+base = {"config_paths": [f"{REPO_DIR}/{c}" for c in CONFIGS], "root": cfg["paths"]["root"],
+        "ratio": cfg["pipeline"]["default_ratio"], "tokens_per_word": M.tokens_per_word(cfg, "arabart"),
+        "threads": os.cpu_count(), "items": items[["sample_id", "domain", "text"]].to_dict("records")}
+SYSTEMS = {"lead": {"variant": None, "strategy": "lead"}, "extractive": {"variant": None, "strategy": "extractive"}}
+from huggingface_hub import snapshot_download
+b = M.model_entry(cfg, "arabart_xlsum_omar")
+BASE_DIR = snapshot_download(b["repo_id"], revision=b["revision"], local_dir="/content/eval_models/baseline")
+SYSTEMS[f"baseline_{EV['primary_strategy']}"] = {"variant": "torch_fp32", "model_dir": BASE_DIR, "device": GPU,
+                                                 "strategy": EV["primary_strategy"], "decoding": dict(cfg["decoding"])}
+FT_DIR = M.local_path(cfg, "arabart_ft")
+if (FT_DIR / "config.json").exists():
+    for st in [EV["primary_strategy"], *EV["ablation_strategies"]]:
+        SYSTEMS[f"ft_{st}"] = {"variant": "torch_fp32", "model_dir": str(FT_DIR), "device": GPU, "strategy": st,
+                               "decoding": M.decoding_for(cfg, "arabart_ft")}
+CPU_DIR = C.root(cfg) / "models" / cfg["optimize"]["export_name"]
+CPU_RT = read_json(CPU_DIR / "runtime.json") if (CPU_DIR / "runtime.json").exists() else None
+if CPU_RT:
+    SYSTEMS[f"cpu_{CPU_RT['variant']}_{EV['primary_strategy']}"] = {
+        "variant": CPU_RT["variant"], "model_dir": str(CPU_DIR), "device": "cpu", "strategy": EV["primary_strategy"],
+        "decoding": read_json(CPU_DIR / "decoding.json")}
+PRIMARY = next((k for k in SYSTEMS if k.startswith("cpu_")), next((k for k in SYSTEMS if k.startswith("ft_")), None))
+print("systems:", list(SYSTEMS), "| primary:", PRIMARY, "| fine-tuned found:", (FT_DIR / "config.json").exists())
+'''), code('''
+# ==== 4. ONNX environment (only if the optimized variant is ONNX) ======================
+ORT_PY = "/content/ort_env/bin/python"
+if CPU_RT and VARIANTS[CPU_RT["variant"]]["runtime"] == "onnx" and not os.path.exists(ORT_PY):
+    sh("python -m venv --system-site-packages /content/ort_env")
+    sh(f"{ORT_PY} -m pip install -q -r {REPO_DIR}/requirements/colab-onnx.txt")
+'''), code('''
+# ==== 5. Run every system over the benchmark (resumable; rerun after a disconnect) =====
+for name, sysd in SYSTEMS.items():
+    out = OUT / f"{name}.jsonl"
+    n_done = sum(1 for _ in open(out)) if out.exists() else 0
+    if n_done >= len(items):
+        print(f"[skip] {name}: {n_done}"); continue
+    spec = {**base, **sysd, "system": name}
+    sp = OUT / f"spec_{name}.json"; write_json(sp, spec)
+    onnx = sysd.get("variant") and VARIANTS[sysd["variant"]]["runtime"] == "onnx"
+    r = subprocess.run([ORT_PY if onnx else sys.executable, "-m", "arabic_summ", "summarize-batch", str(sp), str(out)],
+                       capture_output=True, text=True, env=ENV, cwd=REPO_DIR)
+    print(name, "rc", r.returncode, r.stderr[-1500:] if r.returncode else "")
+OUTPUTS = pd.concat([pd.read_json(OUT / f"{n}.jsonl", lines=True) for n in SYSTEMS if (OUT / f"{n}.jsonl").exists()])
+print(OUTPUTS.groupby("system").size().to_dict())
+'''), code('''
+# ==== 6. Automatic metrics: ROUGE (95 % CI), length, fact check, latency ===============
+SCORED = BE.score_outputs(OUTPUTS, R, SOURCES)
+SUMM = BE.summary_table(SCORED, seed=SEED)
+LAT = BE.latency_table(OUTPUTS)
+SCORED.to_csv(REP / "scored.csv", index=False, encoding="utf-8-sig")
+SUMM.to_csv(REP / "summary.csv", index=False, encoding="utf-8-sig")
+display(SUMM[SUMM.subset == "all"].sort_values("rouge1", ascending=False))
+display(SUMM[SUMM.system == PRIMARY]) if PRIMARY else None
+display(LAT)
+bl = f"baseline_{EV['primary_strategy']}"
+for s in [k for k in SYSTEMS if k.startswith(("ft_", "cpu_"))]:
+    a = SCORED[SCORED.system == s].set_index("sample_id"); c = SCORED[SCORED.system == bl].set_index("sample_id")
+    ids = a.index.intersection(c.index)
+    d, lo, hi = paired_diff_ci(a.loc[ids, "rouge1"], c.loc[ids, "rouge1"], seed=SEED)
+    print(f"{s} - {bl}: ROUGE-1 {d:+.4f} (95% CI {lo:+.4f} .. {hi:+.4f}), n={len(ids)}")
+'''), code('''
+# ==== 7. Optional BERTScore (multilingual BERT; skipped if unavailable) ================
+BERT = None
+try:
+    from bert_score import score as bscore
+except ImportError:
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "bert-score==0.3.13"], capture_output=True, text=True)
+    from bert_score import score as bscore
+try:
+    rows = []
+    for s, g in SCORED.groupby("system"):
+        hyp = OUTPUTS.set_index(["system", "sample_id"]).loc[[(s, i) for i in g.sample_id], "summary"].tolist()
+        _, _, f1 = bscore(hyp, [R.at[i, "reference_summary"] for i in g.sample_id], model_type=EV["bertscore_model"],
+                          batch_size=16, device=GPU)
+        rows.append({"system": s, "bertscore_f1": round(float(f1.mean()), 4)})
+    BERT = pd.DataFrame(rows); display(BERT)
+except Exception as e:
+    print("BERTScore skipped:", type(e).__name__, str(e)[:200])
+'''), code('''
+# ==== 8. Blind human-evaluation sheets (never overwritten) =============================
+HE = EV["human_eval"]
+HD = C.path(cfg, "logs", "05_evaluate", "human_eval", "x").parent
+HUMAN_SYSTEM = PRIMARY
+if HUMAN_SYSTEM and not (HD / "key.csv").exists():
+    sub = OUTPUTS[OUTPUTS.system == HUMAN_SYSTEM]
+    flags = {(r.system, r.sample_id): ("unsupported numbers: " + r.unsupported_numbers) if r.unsupported_numbers else ""
+             for r in SCORED[SCORED.system == HUMAN_SYSTEM].itertuples()}
+    sheet, key = H.build_sheets(sub, SOURCES, HE["n_per_domain"], HE["n_calibration"], SEED, salt=cfg["project"]["name"],
+                                auto_flags=flags)
+    for rater in ("rater_A", "rater_B"):
+        B.write_csv(sheet, HD / f"{rater}.csv")
+    B.write_csv(sheet[sheet.item_id.isin(key.item_id[key.calibration])], HD / "rater_REF_calibration.csv")
+    B.write_csv(key, HD / "key.csv")
+    print(f"wrote {len(sheet)} items for {HUMAN_SYSTEM} -> {HD}")
+print("Raters: fill coverage/accuracy/fluency/coherence (1-5), critical_error (yes/no) and critical_error_type "
+      f"({'/'.join(H.ERROR_TYPES)}). Do not open key.csv. Files:", sorted(p.name for p in HD.glob("*.csv")))
+'''), code('''
+# ==== 9. Human results (runs once the sheets are filled) ===============================
+HUMAN = None
+fa, fb, fref = HD / "rater_A.csv", HD / "rater_B.csv", HD / "rater_REF_calibration.csv"
+if fa.exists() and fb.exists():
+    A_, B_ = B.read_csv(fa), B.read_csv(fb)
+    errs = H.validate_sheet(A_) + H.validate_sheet(B_)
+    if errs:
+        print("sheets not complete yet:", errs[:6])
+    else:
+        key = B.read_csv(HD / "key.csv"); cal = key.item_id[key.calibration.astype(str) == "True"].tolist()
+        if fref.exists() and not H.validate_sheet(ref := B.read_csv(fref)):
+            for nm, X in (("rater_A", A_), ("rater_B", B_)):
+                k = H.agreement(X, ref, HE["kappa_weights"], ids=cal)
+                ok = all(k[c] >= HE["min_calibration_kappa"] for c in H.CRITERIA)
+                print(f"calibration {nm} vs REF: {k} -> {'qualified' if ok else 'NOT qualified (kappa < 0.7)'}")
+        print("agreement A vs B:", H.agreement(A_, B_, HE["kappa_weights"]))
+        adj = H.adjudication_items(A_, B_, HE["max_gap"])
+        fc = HD / "rater_C_adjudication.csv"
+        if len(adj) and not fc.exists():
+            B.write_csv(adj.assign(rater_c=""), fc); print(f"{len(adj)} disagreements -> {fc.name} (third rater)")
+        third = B.read_csv(fc) if fc.exists() else None
+        if third is not None and (third.rater_c.astype(str).str.strip() == "").any():
+            print("waiting for the third rater:", int((third.rater_c.astype(str).str.strip() == "").sum()), "rows")
+        else:
+            HUMAN = H.summarize(H.final_scores(A_, B_, key, third, HE["max_gap"]), HE["min_mean"], HE["max_critical_share"])
+            display(HUMAN); HUMAN.to_csv(REP / "human_summary.csv", index=False)
+'''), code('''
+# ==== 10. Acceptance table + report (paste this output back) ===========================
+cpu_meas = None
+if CPU_RT:
+    cpu_meas = CPU_RT.get("measured")
+ACC = pd.DataFrame(BE.acceptance(PRIMARY, SUMM, LAT, EV["acceptance"], HUMAN, cpu_meas)) if PRIMARY else pd.DataFrame()
+display(ACC)
+label = "INTERIM (references not all human-approved)" if INTERIM else "FINAL (human-approved references only)"
+md_lines = [f"# Benchmark evaluation — {label}", "",
+            f"References: {len(R)} ({R.reference_source.value_counts().to_dict()}; {R.review_status.value_counts().to_dict()}). "
+            "Model-drafted references are reported as *model-drafted, human-verified*.", "",
+            f"Primary system: `{PRIMARY}` (strategy fixed before scoring).", "", "## Acceptance", BE.table_md(ACC), "",
+            "## ROUGE / length / fact check (all texts)", BE.table_md(SUMM[SUMM.subset == "all"]), "",
+            "## By domain and length band (primary)", BE.table_md(SUMM[SUMM.system == PRIMARY]), "",
+            "## Latency (Colab; acceptance latency comes from bench/)", BE.table_md(LAT)]
+if BERT is not None: md_lines += ["", "## BERTScore", BE.table_md(BERT)]
+if HUMAN is not None: md_lines += ["", "## Human evaluation", BE.table_md(HUMAN)]
+(REP / "report.md").write_text("\\n".join(md_lines) + "\\n", encoding="utf-8")
+write_json(REP / "report.json", {"interim": INTERIM, "primary": PRIMARY, "systems": list(SYSTEMS),
+                                 "acceptance": ACC.to_dict("records"), "summary": SUMM.to_dict("records"),
+                                 "latency": LAT.to_dict("records"),
+                                 "bertscore": None if BERT is None else BERT.to_dict("records"),
+                                 "human": None if HUMAN is None else HUMAN.to_dict("records")})
+prepare.update_manifest(cfg, "evaluate", {"interim": INTERIM, "primary": PRIMARY,
+                        "acceptance": ACC.to_dict("records"), "n_references": int(len(R))})
+print(label); print(ACC.to_string(index=False))
+''')]
+    return notebook(cells, gpu=True)
+
+
+NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03, "04_optimize.ipynb": nb04, "05_evaluate.ipynb": nb05}
 
 
 def main() -> None:

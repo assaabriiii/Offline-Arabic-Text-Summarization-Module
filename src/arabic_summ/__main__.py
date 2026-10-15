@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config
+from .io_utils import read_json
 
 
 def _cfg(args):
@@ -46,7 +47,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("spec", type=Path)
     p.add_argument("out", type=Path)
 
+    p = sub.add_parser("summarize-batch", help="summarize benchmark texts with one system (resumable JSONL)")
+    p.add_argument("spec", type=Path)
+    p.add_argument("out", type=Path)
+
     args = ap.parse_args(argv)
+    if args.cmd == "summarize-batch":
+        from .eval import run_batch
+
+        return run_batch.run(read_json(args.spec), args.out)
     if args.cmd == "onnx-export":
         from .optimize import onnx_export as X
 

@@ -55,25 +55,36 @@ def textrank_scores(sentences: Sequence[str], damping: float = 0.85, iters: int 
 
 
 def select(sentences: Sequence[str], word_counts: Sequence[int], budget_words: int,
-           position_weight: float = 0.3) -> list[int]:
-    """Indices (document order) of top-scored sentences fitting `budget_words`.
-    Always returns at least one sentence."""
+           position_weight: float = 0.3, max_words: int | None = None) -> list[int]:
+    """Indices (document order) of top-scored sentences up to `budget_words`.
+
+    Without `max_words` (hybrid pre-selection) the budget is a soft cap and at least one sentence is
+    returned. With `max_words` (extractive baseline) sentences that would exceed the hard maximum are
+    skipped and selection continues until the budget (target) is reached."""
     scores = textrank_scores(sentences, position_weight=position_weight)
+    return _fill(list(np.argsort(-scores, kind="stable")), word_counts, budget_words, max_words, False)
+
+
+def lead(word_counts: Sequence[int], budget_words: int, max_words: int | None = None) -> list[int]:
+    """First sentences up to the budget; with `max_words`, a too-long sentence is skipped instead
+    of ending the summary early (so short leads don't fall below the minimum length)."""
+    return _fill(list(range(len(word_counts))), word_counts, budget_words, max_words, True)
+
+
+def _fill(order: Sequence[int], word_counts: Sequence[int], budget: int, max_words: int | None,
+          stop_on_overflow: bool) -> list[int]:
+    """Add sentences in `order` until the budget is reached. The cap is `max_words` if given (an
+    overflowing sentence is skipped), else the budget itself (the first sentence is always kept;
+    `stop_on_overflow` ends at the first overflowing sentence, as a plain lead does)."""
     chosen, total = [], 0
-    for i in np.argsort(-scores, kind="stable"):
-        if total + word_counts[i] <= budget_words or not chosen:
+    cap = budget if max_words is None else max_words
+    for i in order:
+        if total >= budget:
+            break
+        w = word_counts[i]
+        if total + w <= cap or (max_words is None and not chosen):
             chosen.append(int(i))
-            total += word_counts[i]
-        if total >= budget_words:
+            total += w
+        elif max_words is None and stop_on_overflow:
             break
     return sorted(chosen)
-
-
-def lead(word_counts: Sequence[int], budget_words: int) -> list[int]:
-    chosen, total = [], 0
-    for i, w in enumerate(word_counts):
-        if total + w > budget_words and chosen:
-            break
-        chosen.append(i)
-        total += w
-    return chosen

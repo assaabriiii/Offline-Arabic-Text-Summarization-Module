@@ -84,7 +84,7 @@ class Summarizer:
 
         calls = 0
         if strategy in ("extractive", "lead"):
-            parts, sentences_out = [], self._extract(sents, target, strategy)
+            parts, sentences_out = [], self._extract(sents, target, strategy, hi)
         else:
             units = self._units(sents, target, strategy)
             reqs = []
@@ -103,7 +103,7 @@ class Summarizer:
                 sentences_out = dedup_sentences(to_sentences([merged]), self.p["dedup_sentence_threshold"])
         t2 = time.perf_counter()
 
-        final = trim_to_words(sentences_out, hi)
+        final = trim_to_words(sentences_out, hi, lo)
         summary = join(final)
         n_out = count_words(summary)
         t3 = time.perf_counter()
@@ -139,10 +139,11 @@ class Summarizer:
         budgets = allocate(target, weights, min_seg)
         return [(c.text, b) for c, b in zip(chunks, budgets) if b > 0]
 
-    def _extract(self, sents: Sequence[Sentence], target: int, strategy: str) -> list[str]:
+    def _extract(self, sents: Sequence[Sentence], target: int, strategy: str, hi: int) -> list[str]:
         wc = [count_words(s.text) for s in sents]
         if strategy == "lead":
-            idx = extractive.lead(wc, target)
+            idx = extractive.lead(wc, target, max_words=hi)
         else:
-            idx = extractive.select([s.text for s in sents], wc, target, self.p["hybrid"]["position_weight"])
+            idx = extractive.select([s.text for s in sents], wc, target, self.p["hybrid"]["position_weight"],
+                                    max_words=hi)
         return [sents[i].text for i in idx]

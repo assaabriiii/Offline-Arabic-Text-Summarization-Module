@@ -11,7 +11,7 @@ personal contact details.
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **built, awaiting Colab run** |
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **built, awaiting Colab T4 run** |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
-| 5 | `05_evaluate.ipynb` | — |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -112,6 +112,20 @@ personal contact details.
     only comparative; acceptance timing is done by `bench/` on the 8-core machine. Verified locally on a tiny
     BART: all four variants produce identical outputs.
 
+19. **05 evaluation**: the primary system's strategy (`segmentwise`) is fixed in config before any benchmark
+    scoring; `direct` and `hybrid` are reported as ablations, so the strategy isn't tuned on the test set.
+    The primary system is the optimized CPU variant from 04 (else the fine-tuned model). Interim numbers use all
+    drafted references and are labelled INTERIM; the final report sets `approved_only: true`. Human evaluation:
+    100 outputs (50 per domain) in blind sheets for two raters, 20 calibration items for a reference rater
+    (weighted kappa ≥ 0.7), quadratic-weighted Cohen's kappa, a third rater for gaps > 1 point or disagreement on
+    critical errors. "Mean ≥ 4" is read strictly as every criterion ≥ 4.
+    **Fix found by the dry run**: `lead` and `extractive` stopped at the target length even when that left the
+    summary below the minimum (lead met the bounds on only 84 % of benchmark texts). They now skip sentences that
+    would exceed the maximum and fill to the minimum; `trim_to_words` can complete the minimum at a word boundary.
+    **Interim reference points** (240 texts vs model-drafted references, pending review): lead ROUGE-1 0.370
+    (95 % CI 0.359–0.380), extractive 0.352; both 100 % length-compliant. The 0.40 target is therefore above
+    simple extraction on this benchmark.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -164,4 +178,5 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Team (parallel): human review of all 240 drafts per guideline §1a/§6, then `benchmark-validate --strict`.
 - Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
 - Then `04_optimize.ipynb` on a CPU runtime (can be dry-run on the public baseline now).
-- Next to build: `05_evaluate`, MVP (CLI + Gradio), `bench/`.
+- Then `05_evaluate.ipynb` (T4); human raters fill the sheets it writes.
+- Next to build: MVP (CLI + Gradio), `bench/`, docs (English + Persian summary).

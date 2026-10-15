@@ -38,19 +38,31 @@ def dedup_sentences(sentences: Sequence[str], threshold: float = 0.7) -> list[st
     return [s for s, _ in kept]
 
 
-def trim_to_words(sentences: Sequence[str], max_words: int) -> list[str]:
-    """Keep whole sentences while within `max_words`; cut the last one at a word boundary only
-    if nothing would be kept otherwise."""
-    out, n = [], 0
-    for s in sentences:
+def trim_to_words(sentences: Sequence[str], max_words: int, min_words: int = 0) -> list[str]:
+    """Keep whole sentences while within `max_words`. If that leaves fewer than `min_words` and
+    another sentence follows, append its first words (word boundary) to reach the minimum; if
+    nothing would be kept at all, cut the first sentence at `max_words`."""
+    out, n, rest = [], 0, []
+    for k, s in enumerate(sentences):
         w = count_words(s)
         if n + w <= max_words:
             out.append(s)
             n += w
         else:
+            rest = list(sentences[k:])
             break
     if not out and sentences:
-        out = [" ".join(sentences[0].split()[:max_words])]
+        return [" ".join(sentences[0].split()[:max_words])]
+    if n < min_words and rest:
+        need = min(min_words, max_words) - n
+        toks = rest[0].split()
+        take, got = [], 0
+        for t in toks:
+            if got >= need:
+                break
+            take.append(t)
+            got += 1 if any(ch.isalnum() for ch in t) else 0
+        out.append(" ".join(take))
     return out
 
 

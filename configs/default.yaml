@@ -189,6 +189,26 @@ optimize:
   weights: {quality: 0.5, time: 0.3, memory: 0.1, size: 0.1}   # proposal composite score
   export_name: arabart_ft_cpu
 
+# ------------------------------------------------------- evaluation (05)
+evaluate:
+  approved_only: false        # true for the final report: only human-approved references count
+  primary_strategy: segmentwise   # fixed before looking at benchmark scores; others are ablations
+  ablation_strategies: [direct, hybrid]
+  acceptance:                 # proposal acceptance criteria
+    min_rouge1: 0.40
+    min_length_ok: 1.0
+    max_median_s_300_700: 15
+    max_median_s_all: 25
+  human_eval:
+    n_per_domain: 50          # >= 100 outputs, balanced across the two domains
+    n_calibration: 20         # rater qualification: weighted kappa >= 0.7 vs reference rater
+    min_calibration_kappa: 0.7
+    kappa_weights: quadratic
+    max_gap: 1                # larger disagreements go to a third rater
+    min_mean: 4.0             # every criterion >= 4 (stricter reading of the proposal)
+    max_critical_share: 0.2   # >= 80 % of items without critical errors
+  bertscore_model: bert-base-multilingual-cased   # optional, if downloadable
+
 # ------------------------------------------------------- models
 models:
   arabart_ft:                 # produced by 03_finetune (relative local_path -> under paths.root)
