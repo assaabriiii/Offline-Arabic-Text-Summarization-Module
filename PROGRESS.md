@@ -116,10 +116,18 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
   (b) build the factual checker now (moved forward from 05) and use it in model and decoding selection;
   (c) prefer strategies whose per-call compression is mild (hybrid rewrite) and keep extractive as
       a guaranteed-faithful fallback.
-- The run had not yet picked up 01's new cells: only 150 news candidates, no org reports and no
-  selection. `01_data` cells 7–9 still need to run.
+
+## Benchmark items frozen (01_data cells 7–9, Colab, 2026-10-15, commit 093fb97)
+- 180 org-report pages fetched, 0 failures, 0 content-hash changes since harvesting.
+- Auto-selection (rules v1, seed 42): **240 selected**, 120 news + 120 org_report, each split
+  40/40/40 across the 300–499 / 500–699 / 700–1000 bins. Org sources: WHO EMRO 34, UN Women AS 34,
+  UNICEF 27, UNFPA 25. 0 screening failures; 90 reserves (30 news, 60 org).
+- Validation PASS (non-strict), **0 leaks** against XL-Sum train+validation (240 checked).
+  Remaining warnings: 240 reference summaries are missing (human work).
+- Colab note: a reattached runtime kept old `arabic_summ` modules in memory, which caused
+  AttributeErrors after code updates. The setup cell now drops cached `arabic_summ` modules after
+  pulling (commit 093fb97).
 
 ## Next
 - Team (parallel, long lead time): write and review the 240 reference summaries per `docs/reference_guideline.md`.
-- User re-runs `01_data.ipynb` (new cells 7–8: org reports + auto-selection), then runs `02_preprocess.ipynb` on T4.
 - Then: `03_finetune.ipynb`.
