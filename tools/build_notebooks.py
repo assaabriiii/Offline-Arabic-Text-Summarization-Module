@@ -67,6 +67,9 @@ sh(f"git -C {{REPO_DIR}} fetch -q {{url}} {{REPO_REF}} && git -C {{REPO_DIR}} ch
 sh(f"pip install -q -r {{REPO_DIR}}/{{REQUIREMENTS}}")
 sh(f"pip install -q --no-deps -e {{REPO_DIR}}")
 sys.path.insert(0, f"{{REPO_DIR}}/src"); importlib.invalidate_caches()
+# a reattached runtime may still hold an older copy of the package in memory: drop it
+for _m in [m for m in sys.modules if m == "arabic_summ" or m.startswith("arabic_summ.")]:
+    del sys.modules[_m]
 os.chdir(REPO_DIR)
 
 from arabic_summ.env import environment_report, format_report
