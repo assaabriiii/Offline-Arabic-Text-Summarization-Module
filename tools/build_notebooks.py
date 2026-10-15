@@ -158,9 +158,12 @@ print({k: m[k] for k in ("written", "kept_existing", "news_candidates", "news_by
   ≤ 15 % numeric tokens), then 120 per domain spread evenly over length bins and round-robin over sources.
   Unsampled items are kept as `rejected` + note `reserve`; promote one to `selected` to replace a bad pick.
 
-**Reference summaries are not automated.** Open `references.csv` in Google Sheets and fill only the rows whose
-`sample_id` is `selected` in `benchmark_items.csv`, following `docs/reference_guideline.md`
-(writer + a different reviewer, `review_status=approved`).
+**Reference summaries** (cell 8b): at the user's request the 240 references were **drafted by a model**
+(`reference_source=llm_draft`, writer `claude-opus-5.5`). Upload the drafts file (never committed) to
+`DRIVE_ROOT/data/benchmark/reference_drafts.json`; cell 8b fills only empty rows and leaves
+`review_status=pending`. A fluent Arabic reviewer must then check every row in Google Sheets against
+`docs/reference_guideline.md` §6, set `reviewer_id` and `review_status=approved` (or `needs_revision`).
+Results built on these references are reported as **model-drafted, human-verified**.
 '''), code('''
 # ==== 7. Organizational reports: fetch the committed URL list + import manual uploads ===
 from arabic_summ import config as C
@@ -177,6 +180,14 @@ print(f"manual uploads imported: {len(added)}")
 # ==== 8. Automatic, seeded item selection (120 per domain) ==============================
 import json
 print(json.dumps(prepare.run_auto_select(cfg), ensure_ascii=False, indent=1))
+'''), code('''
+# ==== 8b. Model-drafted references -> references.csv (empty rows only, status pending) ===
+drafts = C.path(cfg, "benchmark") / "reference_drafts.json"
+if drafts.exists():
+    print(json.dumps(prepare.import_reference_drafts(cfg, drafts, writer_id="claude-opus-5.5"),
+                     ensure_ascii=False, indent=1))
+else:
+    print("no reference_drafts.json on Drive yet: skipping")
 '''), code('''
 # ==== 9. Validate benchmark + leakage check (STRICT=True only when freezing the set) ====
 STRICT = False

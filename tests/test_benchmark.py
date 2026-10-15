@@ -212,3 +212,38 @@ def test_web_clean_text_cuts_boilerplate():
     from arabic_summ.data.web_sources import clean_text
     body = "فقرة أولى عن التقرير.\nفقرة ثانية.\nنبذة عن اليونيسف\nتعمل اليونيسف في أكثر من 190 بلدا."
     assert clean_text(body) == "فقرة أولى عن التقرير.\nفقرة ثانية."
+
+
+def test_import_reference_drafts_fills_only_empty_rows(items):
+    refs = B.reference_template(items, BCFG).astype(str)
+    refs.loc[0, "reference_summary"] = "ملخص بشري موجود"
+    drafts = {sid: {"summary": arabic_text(round(0.2 * int(n)), 7 + i),
+                    "key_points": ["نقطة اولى", "نقطة ثانية", "نقطة ثالثة"]}
+              for i, (sid, n) in enumerate(zip(refs.sample_id, refs.input_words))}
+    out, info = B.import_reference_drafts(refs, items, drafts, "model-x", BCFG)
+    assert info["kept_existing"] == ["NEWS-0001"] and len(info["filled"]) == 3
+    assert out.loc[0, "reference_summary"] == "ملخص بشري موجود"
+    row = out.set_index("sample_id").loc["ORG-0001"]
+    assert (row.reference_source, row.writer_id, row.reviewer_id, row.review_status) == \
+        ("llm_draft", "model-x", "", "pending")
+    assert row.reference_words == str(count_words(row.reference_summary))
+    again, info2 = B.import_reference_drafts(out, items, drafts, "model-x", BCFG)
+    assert info2["filled"] == [] and again.equals(out)
+    with pytest.raises(ValueError):
+        B.import_reference_drafts(refs, items, {"NEWS-9999": drafts["NEWS-0002"]}, "model-x", BCFG)
+
+
+def test_llm_drafts_need_a_different_human_reviewer(items):
+    refs = approved_refs(items)
+    refs["reference_source"] = "llm_draft"
+    refs["writer_id"] = "claude"
+    refs.loc[0, ["reviewer_id", "review_status"]] = ["", "pending"]
+    assert B.validate(items, refs, BCFG, strict=False).ok
+    rep = B.validate(items, refs, BCFG, strict=True)
+    assert not rep.ok and any("NEWS-0001" in e for e in rep.errors)
+    refs.loc[0, ["reviewer_id", "review_status"]] = ["R2", "approved"]
+    rep = B.validate(items, refs, BCFG, strict=True)
+    assert rep.ok, rep.summary()
+    assert rep.stats["approved_by_source"] == {"llm_draft": 4}
+    refs.loc[1, "reviewer_id"] = "claude"
+    assert not B.validate(items, refs, BCFG, strict=True).ok

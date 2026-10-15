@@ -14,7 +14,7 @@ personal contact details.
 | 5 | `05_evaluate.ipynb` | — |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
-| — | Benchmark reference summaries | **human work outstanding** (writer + reviewer per guideline) |
+| — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
 
 ## Decisions (2026-10-13)
 1. **Acceptance ROUGE** is measured on the internal benchmark (≥ 240 texts with long human
@@ -81,6 +81,17 @@ personal contact details.
     omarsabri8756/AraT5v2-XLSum-arabic-text-summarization. Three of these have no license on the Hub,
     so they are for comparison only.
 
+## Decisions (2026-10-15, references)
+16. **References are model-drafted, human-verified** (deviates from proposal §11.1 and decision 6;
+    the user chose this via "AI drafts + human review"; **project lead must approve**). Claude drafted
+    all 240 (`reference_source=llm_draft`, `writer_id=claude-opus-5.5`, guideline v1.0 §2–§5). An
+    automatic check confirmed hard length limits, ≥ 3 key points, one paragraph, and that every number
+    in a draft occurs in its source. A manual pass removed details the sources didn't state. 20 drafts
+    sit slightly outside the 15–25 % guideline band (all inside the hard 10–30 % limits); reviewers may
+    lengthen the shortest (NEWS-0102/0105/0122/0125, ORG-0177 at 13–14 %). Every row needs a
+    different, fluent Arabic human reviewer before `--strict` passes. Reports must say
+    "model-drafted, human-verified". The drafts JSON is never committed. See guideline §1a.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -129,5 +140,6 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
   pulling (commit 093fb97).
 
 ## Next
-- Team (parallel, long lead time): write and review the 240 reference summaries per `docs/reference_guideline.md`.
-- Then: `03_finetune.ipynb`.
+- Upload `reference_drafts.json` to `DRIVE_ROOT/data/benchmark/`, run 01_data cells 8b + 9.
+- Team (parallel): human review of all 240 drafts per guideline §1a/§6, then `benchmark-validate --strict`.
+- Now: `03_finetune.ipynb`.

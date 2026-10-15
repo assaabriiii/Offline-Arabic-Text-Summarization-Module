@@ -31,6 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--domain", required=True, choices=["news", "org_report"])
     p.add_argument("--sources-csv", type=Path)
 
+    p = sub.add_parser("benchmark-import-drafts",
+                       help="fill empty references.csv rows from a drafts JSON (status stays pending)")
+    p.add_argument("drafts", type=Path, help='JSON {sample_id: {"summary": ..., "key_points": [...]}}')
+    p.add_argument("--writer-id", required=True)
+    p.add_argument("--reference-source", default="llm_draft", choices=["human", "source", "llm_draft"])
+
     args = ap.parse_args(argv)
     cfg = _cfg(args)
 
@@ -57,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         added = B.import_text_folder(C.path(cfg, "benchmark"), args.folder, args.domain, cfg["benchmark"], args.sources_csv)
         print(f"added {len(added)} new candidate texts")
         return 0
+    if args.cmd == "benchmark-import-drafts":
+        from .data import prepare
+
+        res = prepare.import_reference_drafts(cfg, args.drafts, args.writer_id, args.reference_source)
+        print(res)
+        return 0 if res["validation_ok"] else 1
     return 2
 
 

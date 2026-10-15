@@ -9,7 +9,20 @@ Applies to every row of `references.csv`. The proposal requires this guideline t
 - **Reviewer**: a second fluent Arabic speaker, **not** the writer. Checks the reference against
   the checklist in §6 and sets `review_status`.
 - The writer and reviewer must not see any model output for that text beforehand. No machine
-  translation, LLM or summarization tool may be used to draft or edit references.
+  translation, LLM or summarization tool may be used to draft or edit references, except under §1a.
+
+## 1a. Model-drafted references (deviation from proposal §11.1, needs project-lead sign-off)
+At the user's request (2026-10-15) the first version of all 240 references was drafted by a
+model (`reference_source = llm_draft`, `writer_id = claude-opus-5.5`) following §2–§5.
+- Each row stays `review_status = pending` until a fluent Arabic **human** reviewer checks it
+  against §6, fixes or rejects it, and sets `reviewer_id` and `review_status`. The validator
+  rejects a reviewer equal to the writer, and `--strict` fails on any unapproved row.
+- The reviewer reads the source text first, then the draft. Edits by the reviewer are allowed;
+  keep `reference_source = llm_draft` and describe substantial changes in `review_notes`.
+- Reports, the final benchmark description and any ROUGE claim must call these references
+  **model-drafted, human-verified** and give the counts per `reference_source` (the validator
+  prints `references_by_source` / `approved_by_source`).
+- The drafts file is kept out of git (it contains the reference answers of the test set).
 
 ## 2. Length
 - Aim for `ref_target_words`, which is about 20% of the input's word count. The guideline range
@@ -59,7 +72,7 @@ revises, and the reviewer checks again.
 |---|---|---|
 | `reference_summary` | writer | the summary text |
 | `key_points` | writer | one per line (or separated by `\|`), at least 3 |
-| `reference_source` | writer | `human`, or `source` if the text came with a credible author-written summary that meets §2–§5 |
+| `reference_source` | writer | `human`; `source` if the text came with a credible author-written summary that meets §2–§5; `llm_draft` under §1a |
 | `writer_id`, `reviewer_id` | both | short stable initials, e.g. `MD`, `R2` |
 | `review_status` | reviewer | `pending` → `approved` / `needs_revision` / `rejected` |
 | `review_notes` | reviewer | reason for any status other than approved |

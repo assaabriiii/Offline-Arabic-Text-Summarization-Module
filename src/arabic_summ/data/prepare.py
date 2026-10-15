@@ -248,6 +248,27 @@ def validate_benchmark(cfg, strict: bool = False, index_cache: tuple | None = No
     return rep, leak
 
 
+def import_reference_drafts(cfg, drafts_json: Path | str, writer_id: str,
+                            reference_source: str = "llm_draft") -> dict:
+    """Merge a drafts JSON into references.csv (empty rows only), then validate (non-strict)."""
+    bdir = C.path(cfg, "benchmark")
+    items, refs = B.read_csv(bdir / B.ITEMS_FILE), B.read_csv(bdir / B.REFS_FILE)
+    drafts = read_json(Path(drafts_json))
+    refs, info = B.import_reference_drafts(refs, items, drafts, writer_id, cfg["benchmark"], reference_source)
+    if info["filled"]:
+        B.write_csv(refs, bdir / B.REFS_FILE)
+    rep = B.validate(items, refs, cfg["benchmark"], strict=False)
+    update_manifest(cfg, "reference_drafts", {
+        "drafts_json": str(drafts_json), "drafts_sha256": sha256_file(Path(drafts_json)),
+        "writer_id": writer_id, "reference_source": reference_source,
+        "filled": len(info["filled"]), "kept_existing": len(info["kept_existing"]),
+        "imported_utc": utc_now(),
+    })
+    return {"filled": len(info["filled"]), "kept_existing": len(info["kept_existing"]),
+            "validation_ok": rep.ok, "n_errors": len(rep.errors), "errors": rep.errors[:10],
+            "stats": rep.stats}
+
+
 # ------------------------------------------------------------------ organizational reports + selection
 
 def fetch_org_reports(cfg, repo_root: Path | str = ".", delay: float = 1.0) -> dict:
