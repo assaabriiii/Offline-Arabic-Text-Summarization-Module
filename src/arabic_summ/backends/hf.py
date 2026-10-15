@@ -15,13 +15,15 @@ class HFBackend:
                  dtype: str = "float32", max_input_tokens: int = 1024, batch_size: int = 4,
                  local_files_only: bool = False, num_threads: int | None = None):
         import torch
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        from transformers import AutoModelForSeq2SeqLM
+
+        from ..models import load_tokenizer
 
         if num_threads:
             torch.set_num_threads(num_threads)
         self.torch = torch
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, revision=revision, local_files_only=local_files_only)
+        self.tokenizer = load_tokenizer(model_path, revision=revision, local_files_only=local_files_only)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
             model_path, revision=revision, local_files_only=local_files_only,
             dtype=getattr(torch, dtype),

@@ -26,6 +26,21 @@ def all_model_keys(cfg: Mapping) -> list[str]:
     return [k for k in m if k != "baselines"] + list(m.get("baselines", {}))
 
 
+def load_tokenizer(path_or_repo: str, revision: str | None = None, **kw):
+    """AutoTokenizer, with a fallback for repos whose tokenizer.json disagrees with the declared class.
+
+    UBC-NLP/AraT5v2 declares `T5Tokenizer` (Unigram) but ships a BPE `tokenizer.json`; transformers 5
+    then fails with "'dict' object is not an instance of 'Sequence'". Loading tokenizer.json directly
+    gives ids identical to the repo's spiece.model (verified on sample Arabic sentences, 2026-10-15).
+    """
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+    try:
+        return AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw)
+    except TypeError:
+        return PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
+
+
 def calibration_path(cfg: Mapping) -> Path:
     return C.path(cfg, "processed", "tokenizer_calibration.json")
 

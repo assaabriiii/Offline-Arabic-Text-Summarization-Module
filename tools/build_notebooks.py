@@ -213,7 +213,6 @@ Runtime: **T4 GPU** recommended (CPU works, slower). Resumable: calibration is c
 '''), *setup_cells("02_preprocess", "requirements/colab-data.txt"), code('''
 # ==== 3. Tokenizer calibration (XL-Sum train sample; cached) ============================
 import pandas as pd
-from transformers import AutoTokenizer
 from arabic_summ import models as M
 from arabic_summ.data import prepare
 from arabic_summ.io_utils import read_json
@@ -228,7 +227,7 @@ train = prepare.load_processed(cfg, "train").sample(N_SAMPLE, random_state=cfg["
 tokenizers = {}
 for key in TOKENIZERS:
     e = M.model_entry(cfg, key)
-    tokenizers[key] = AutoTokenizer.from_pretrained(e["repo_id"], revision=e["revision"])
+    tokenizers[key] = M.load_tokenizer(e["repo_id"], revision=e["revision"])
     if key in cached:
         print(f"[skip] {key}: cached"); continue
     rec = {"repo_id": e["repo_id"], "revision": e["revision"], "tokenizer_class": type(tokenizers[key]).__name__,
