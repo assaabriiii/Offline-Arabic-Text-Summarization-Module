@@ -191,4 +191,5 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
 - Then `04_optimize.ipynb` on a CPU runtime (can be dry-run on the public baseline now).
 - Then `05_evaluate.ipynb` (T4); human raters fill the sheets it writes.
-- Next: install-and-run guide (English + Persian summary) and architecture notes.
+- Docs done: `README.md` (install-and-run guide), `docs/architecture.md`, `docs/README.fa.md` (Persian summary).
+- Remaining: run 03 → 04 → 05 in Colab; human review of references and the human evaluation; `bench/` on the 8-core machine.
