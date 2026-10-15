@@ -7,7 +7,7 @@ personal contact details.
 | # | Deliverable | Status |
 |---|---|---|
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
-| 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **built, awaiting first Colab run** |
+| 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: normalization (done in package) + sentence split + chunking + hierarchical pipeline | next |
 | 3 | `03_finetune.ipynb` | — |
 | 4 | `04_optimize.ipynb` | — |
@@ -55,6 +55,21 @@ personal contact details.
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
+## 01_data results (Colab CPU runtime, 2026-10-15, commit 116aabd)
+- Archive SHA256 verified (`371a07df…`). Raw split sizes match the proposal: 37519 / 4689 / 4689.
+- Train: 28 near-empty rows dropped; 130 duplicates removed (95 exact, 35 near) → **37361**.
+  Validation: 1 near-duplicate flagged and kept. Test: untouched.
+- Lengths: median article is about 313 words (p90 882 train / 703 val+test). Median summary
+  is about 23–24 words, a **median ratio of 0.072–0.074**, which is below our 10% floor.
+  Only 18–26% of summaries have ≥ 30 words. About 50% of articles are 300–1000 words
+  (2382 test articles in range). This confirms the length mismatch behind decision 2.
+- Benchmark scaffold: 150 news candidates (50 per length bin), **0 leaks** vs train+validation.
+- Colab image observed: Python 3.13, torch 2.11 (CPU build on a CPU runtime), transformers 5.18,
+  datasets 4.8.5, huggingface_hub 1.33. Note that `03` must target transformers v5 APIs.
+
 ## Next
-- User runs `01_data.ipynb` in Colab and pastes back the output of cells 4, 5, 6, 8 and 9.
-- Then: `02_preprocess.ipynb` (sentence splitter, chunker, hierarchical pipeline, tests).
+- Team (parallel, long lead time): select ≥ 120 of the 150 news candidates, collect ≥ 120
+  organizational-report texts, and write and review references per `docs/reference_guideline.md`.
+- Open question: is GPU available for fine-tuning (free Colab T4 / Kaggle)? If not, `03` uses
+  public XL-Sum fine-tuned checkpoints, with fine-tuning optional.
+- Build `02_preprocess.ipynb` (sentence splitter, chunker, segment-wise / hybrid pipeline, tests).
