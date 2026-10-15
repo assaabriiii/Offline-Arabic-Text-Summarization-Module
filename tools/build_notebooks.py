@@ -143,39 +143,45 @@ display(pd.DataFrame(rows).set_index("split"))
 m = prepare.step_benchmark_scaffold(cfg)
 print({k: m[k] for k in ("written", "kept_existing", "news_candidates", "news_by_length_bin", "test_articles_in_range")})
 '''), md('''
-### Annotation workflow (rerun cell 8 any time)
+### Benchmark items (rerun cells 7–9 any time; they never overwrite reviewed rows)
 
-Files in `DRIVE_ROOT/data/benchmark/` (UTF-8, open in Google Sheets via *File → Import*, then
-*File → Download → CSV* back to the **same path**):
+* **News** (cell 6): 150 XL-Sum *test* candidates.
+* **Organizational reports** (cell 7): the repo ships `benchmark_sources/org_reports.csv`, a list of public
+  Arabic pages from WHO EMRO, UNICEF MENA, UNFPA and UN Women Arab States (URLs only; texts are copyrighted and
+  are fetched here for non-commercial research evaluation, never committed). You can also drop your own
+  UTF-8 `.txt` reports into `DRIVE_ROOT/data/benchmark/incoming_org/` with a `sources.csv` (same columns as
+  `external_sources_template.csv`).
+* **Selection** (cell 8): automatic, seeded and documented: screening (300–1000 words, ≥ 90 % Arabic script,
+  ≤ 15 % numeric tokens), then 120 per domain spread evenly over length bins and round-robin over sources.
+  Unsampled items are kept as `rejected` + note `reserve`; promote one to `selected` to replace a bad pick.
 
-| File | Who | What |
-|---|---|---|
-| `benchmark_items.csv` | data owner | set `status` to `selected` / `rejected` for each candidate (keep ≥ 120 per domain) |
-| `references.csv` | Arabic writer + 2nd reviewer | `reference_summary` (within `ref_min_words`–`ref_max_words`, aim for `ref_target_words`), `key_points` (one per line, ≥ 3), `writer_id`, `reviewer_id`, `review_status=approved` |
-| `external_sources_template.csv` | data owner | metadata for organizational reports (one row per `.txt` file) |
-
-**Organizational reports:** put one UTF-8 `.txt` per report in `DRIVE_ROOT/data/benchmark/incoming_org/`,
-fill `sources.csv` next to them (same columns as the template), then run cell 7.
+**Reference summaries are not automated.** Open `references.csv` in Google Sheets and fill only the rows whose
+`sample_id` is `selected` in `benchmark_items.csv`, following `docs/reference_guideline.md`
+(writer + a different reviewer, `review_status=approved`).
 '''), code('''
-# ==== 7. (optional) Import organizational-report texts ==================================
+# ==== 7. Organizational reports: fetch the committed URL list + import manual uploads ===
 from arabic_summ import config as C
 from arabic_summ.data import benchmark as B
-incoming = C.path(cfg, "benchmark") / "incoming_org"
-incoming.mkdir(parents=True, exist_ok=True)
-src_csv = incoming / "sources.csv"
-added = B.import_text_folder(C.path(cfg, "benchmark"), incoming, "org_report", cfg["benchmark"],
+rep = prepare.fetch_org_reports(cfg, REPO_DIR)          # resumable: skips files already on Drive
+print(rep)
+manual = C.path(cfg, "benchmark") / "incoming_org"
+manual.mkdir(parents=True, exist_ok=True)
+src_csv = manual / "sources.csv"
+added = B.import_text_folder(C.path(cfg, "benchmark"), manual, "org_report", cfg["benchmark"],
                              src_csv if src_csv.exists() else None)
-print(f"imported {len(added)} new texts from {incoming}")
-if len(added):
-    display(added[["sample_id", "source_id", "word_count", "length_bin", "source"]])
+print(f"manual uploads imported: {len(added)}")
 '''), code('''
-# ==== 8. Validate benchmark + leakage check (STRICT=True only when freezing the set) ====
+# ==== 8. Automatic, seeded item selection (120 per domain) ==============================
+import json
+print(json.dumps(prepare.run_auto_select(cfg), ensure_ascii=False, indent=1))
+'''), code('''
+# ==== 9. Validate benchmark + leakage check (STRICT=True only when freezing the set) ====
 STRICT = False
 rep, leak = prepare.validate_benchmark(cfg, strict=STRICT)
 print(rep.summary())
 print(f"leakage vs XL-Sum train+validation: {leak['n_leaks']} of {leak['items_checked']} items")
 '''), code('''
-# ==== 9. Manifest summary (paste this output back) ======================================
+# ==== 10. Manifest summary (paste this output back) ======================================
 from arabic_summ.io_utils import read_json
 man = read_json(prepare.manifest_path(cfg))
 print("dataset :", {k: man["dataset"][k] for k in ("repo_id", "revision", "archive_sha256", "license", "download_date_utc")})
@@ -188,7 +194,118 @@ print("code    :", man["code"])
     return notebook(cells)
 
 
-NOTEBOOKS = {"01_data.ipynb": nb01}
+def nb02() -> dict:
+    cells = [md('''
+# 02 · Preprocessing, chunking and the summarization pipeline
+
+**What this does**
+1. Runs the unit tests (normalization, sentence splitting, chunking, length policy, pipeline logic).
+2. **Tokenizer calibration**: subword tokens per word for each candidate model's tokenizer, measured on
+   XL-Sum *train* (never test). Turns word targets (10–30 % of input, 30–300 words) into decoder
+   `min_new_tokens` / `max_new_tokens`. Saved to `data/processed/tokenizer_calibration.json`.
+3. Measures how many benchmark texts exceed the model's direct capacity (900 / 1024 tokens).
+4. Shows sentence splitting and chunking (≤ 900 tokens, ≤ 80 overlap) on one benchmark text.
+5. **Pipeline smoke run** with a public XL-Sum AraBART checkpoint (baseline, not our final model) on 9 benchmark
+   texts across strategies `lead`, `extractive`, `direct`, `segmentwise`, `hybrid`: output length vs. the
+   10–30 % bounds, model calls and time. No ROUGE yet: human references are still being written.
+
+Runtime: **T4 GPU** recommended (CPU works, slower). Resumable: calibration is cached on Drive.
+'''), *setup_cells("02_preprocess", "requirements/colab-data.txt"), code('''
+# ==== 3. Tokenizer calibration (XL-Sum train sample; cached) ============================
+import pandas as pd
+from transformers import AutoTokenizer
+from arabic_summ import models as M
+from arabic_summ.data import prepare
+from arabic_summ.io_utils import read_json
+from arabic_summ.text.normalize import policies_from_config
+model_policy, _ = policies_from_config(cfg)
+TOKENIZERS = {"arabart": "arabart", "arat5v2": "arat5v2"}   # fine-tuned baselines share these tokenizers
+N_SAMPLE = 2000
+
+cal_path = M.calibration_path(cfg)
+cached = read_json(cal_path) if cal_path.exists() else {}
+train = prepare.load_processed(cfg, "train").sample(N_SAMPLE, random_state=cfg["project"]["seed"])
+tokenizers = {}
+for key in TOKENIZERS:
+    e = M.model_entry(cfg, key)
+    tokenizers[key] = AutoTokenizer.from_pretrained(e["repo_id"], revision=e["revision"])
+    if key in cached:
+        print(f"[skip] {key}: cached"); continue
+    rec = {"repo_id": e["repo_id"], "revision": e["revision"], "tokenizer_class": type(tokenizers[key]).__name__,
+           "n_sample": N_SAMPLE, "sample": "xlsum train, seed 42",
+           "article": M.calibrate_tokens_per_word(tokenizers[key], train.text, model_policy),
+           "summary": M.calibrate_tokens_per_word(tokenizers[key], train.summary, model_policy)}
+    M.save_calibration(cfg, key, rec)
+cal = read_json(cal_path)
+display(pd.DataFrame({k: {"tokenizer": v["tokenizer_class"], "tok/word article": v["article"]["tokens_per_word"],
+                          "tok/word summary": v["summary"]["tokens_per_word"]} for k, v in cal.items()}).T)
+'''), code('''
+# ==== 4. How many benchmark texts exceed direct model capacity? =========================
+from arabic_summ import config as C
+from arabic_summ.data import benchmark as B
+items = B.read_csv(C.path(cfg, "benchmark") / B.ITEMS_FILE)
+items = items[items.status == "selected"] if (items.status == "selected").any() else items[items.status != "rejected"]
+rows = []
+for key, tok in tokenizers.items():
+    n = items.text.map(lambda t: len(tok(t, add_special_tokens=False)["input_ids"]))
+    for dom in sorted(items.domain.unique()):
+        m = items.domain == dom
+        rows.append({"tokenizer": key, "domain": dom, "texts": int(m.sum()), "tokens_median": int(n[m].median()),
+                     "tokens_max": int(n[m].max()), "share_>900": round((n[m] > 900).mean(), 3),
+                     "share_>1024": round((n[m] > 1024).mean(), 3)})
+display(pd.DataFrame(rows))
+'''), code('''
+# ==== 5. Sentence splitting + chunking on the longest benchmark text ====================
+from arabic_summ.text.chunk import chunk_sentences
+from arabic_summ.text.normalize import normalize
+from arabic_summ.text.segment import split_sentences
+tok = tokenizers["arabart"]
+count = lambda t: len(tok(t, add_special_tokens=False)["input_ids"])
+longest = items.loc[items.word_count.astype(int).idxmax()]
+sents = split_sentences(normalize(longest.text, model_policy))
+print(longest.sample_id, longest.word_count, "words |", len(sents), "sentences")
+for name, mx in [("direct (900/80)", 900), ("segmentwise", cfg["pipeline"]["segmentwise"]["segment_max_tokens"])]:
+    ch = chunk_sentences(sents, count, mx, cfg["pipeline"]["chunking"]["overlap_tokens"],
+                         cfg["pipeline"]["chunking"]["paragraph_break_min_fill"])
+    print(f"{name:18s}: {len(ch)} chunks, tokens={[c.n_tokens for c in ch]}, overlap sentences={[c.n_overlap_sentences for c in ch]}")
+print("\\nfirst 5 sentences:"); [print("  -", s.text[:120]) for s in sents[:5]]
+'''), code('''
+# ==== 6. Pipeline smoke run with a public XL-Sum baseline ================================
+import json, time, torch
+from arabic_summ.summarize.pipeline import Summarizer
+BASELINE = "arabart_xlsum_omar"            # see configs/default.yaml -> models.baselines
+STRATEGIES = ["lead", "extractive", "direct", "segmentwise", "hybrid"]
+RATIO = cfg["pipeline"]["default_ratio"]
+
+backend = M.load_hf_backend(cfg, BASELINE, dtype="float16" if torch.cuda.is_available() else "float32")
+summ = Summarizer(cfg, backend=backend, tokens_per_word=M.tokens_per_word(cfg, "arabart"))
+print(backend.name, "| device:", backend.device, "| tokens/word:", summ.tokens_per_word)
+
+demo = (items.groupby(["domain", "length_bin"], group_keys=False)
+             .apply(lambda g: g.sample(min(len(g), 2), random_state=0)).head(9))
+out_dir = C.path(cfg, "logs") / "02_pipeline_demo"; out_dir.mkdir(parents=True, exist_ok=True)
+records = []
+for _, r in demo.iterrows():
+    for st in STRATEGIES:
+        res = summ.summarize(r.text, ratio=RATIO, strategy=st)
+        records.append({"sample_id": r.sample_id, "domain": r.domain, **{k: v for k, v in res.to_dict().items() if k != "parts"}})
+pd.DataFrame(records).to_json(out_dir / "results.jsonl", orient="records", lines=True, force_ascii=False)
+df = pd.DataFrame(records)
+display(df.groupby("strategy").agg(length_ok=("length_ok", "mean"), words=("output_words", "median"),
+                                   target=("target_words", "median"), calls=("n_model_calls", "mean"),
+                                   seconds=("seconds", lambda s: round(pd.Series([x["total"] for x in s]).median(), 2))))
+'''), code('''
+# ==== 7. Read one example per strategy (paste this back) ================================
+ex = demo.iloc[0]
+print(ex.sample_id, ex.domain, ex.word_count, "words\\n")
+for st in STRATEGIES:
+    r = next(x for x in records if x["sample_id"] == ex.sample_id and x["strategy"] == st)
+    print(f"--- {st}: {r['output_words']} words (bounds {r['bounds']}), {r['seconds']['total']}s\\n{r['summary']}\\n")
+''')]
+    return notebook(cells, gpu=True)
+
+
+NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02}
 
 
 def main() -> None:

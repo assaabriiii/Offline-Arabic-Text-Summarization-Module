@@ -202,6 +202,103 @@ def import_text_folder(
     return pd.DataFrame(new_rows, columns=ITEM_COLUMNS)
 
 
+# ------------------------------------------------------------------ automatic selection
+
+def screen(text: str, bcfg: Mapping) -> str:
+    """Return '' if the text passes the automatic screening rules, else the reason."""
+    acfg = bcfg["auto_select"]
+    toks = text.split()
+    n = count_words(text)
+    if not bcfg["input_min_words"] <= n <= bcfg["input_max_words"]:
+        return f"length {n} outside {bcfg['input_min_words']}-{bcfg['input_max_words']}"
+    if arabic_letter_ratio(text) < acfg["min_arabic_ratio"]:
+        return "Arabic-script ratio too low"
+    digit_share = sum(any(c.isdigit() for c in t) for t in toks) / max(1, len(toks))
+    if digit_share > acfg["max_digit_token_share"]:
+        return f"table/number-heavy ({digit_share:.0%} numeric tokens)"
+    return ""
+
+
+def _quotas(total: int, groups: Sequence[str], available: Mapping[str, int]) -> dict[str, int]:
+    """Spread `total` evenly over groups, moving unfillable quota to groups with spare items."""
+    q = {g: 0 for g in groups}
+    remaining = total
+    while remaining > 0:
+        open_groups = [g for g in groups if q[g] < available[g]]
+        if not open_groups:
+            break
+        for g in open_groups:
+            if remaining == 0:
+                break
+            q[g] += 1
+            remaining -= 1
+    return q
+
+
+def auto_select(items: pd.DataFrame, bcfg: Mapping, seed: int) -> tuple[pd.DataFrame, dict]:
+    """Select `auto_select.per_domain` items per domain among `candidate` rows.
+
+    Rules (version `auto_select.rule_version`): screen every candidate (see `screen`), then
+    sample the passing ones evenly across length bins, round-robin over sources within a bin
+    for diversity, in a seeded random order. Unsampled passing rows become `rejected` with
+    note "reserve" (an annotator can promote one to replace a bad pick). Rows already
+    `selected` / `rejected` are never touched, so the call is idempotent and tops up.
+    """
+    acfg = bcfg["auto_select"]
+    items = items.copy()
+    tag = f"auto v{acfg['rule_version']} seed {seed}"
+    rng = np.random.default_rng(seed)
+    report: dict = {}
+    for domain in bcfg["domains"]:
+        dom = items.domain == domain
+        need = acfg["per_domain"] - int((dom & (items.status == "selected")).sum())
+        cand_idx = items.index[dom & (items.status == "candidate")]
+        failed = {}
+        passing = []
+        for i in cand_idx:
+            reason = screen(items.at[i, "text"], bcfg)
+            if reason:
+                failed[i] = reason
+            else:
+                passing.append(i)
+        for i, reason in failed.items():
+            items.at[i, "status"] = "rejected"
+            items.at[i, "notes"] = f"auto-screen ({tag}): {reason}"
+
+        passing = list(rng.permutation(passing)) if passing else []
+        bins = sorted({items.at[i, "length_bin"] for i in passing}, key=lambda b: int(b.split("-")[0]) if b[0].isdigit() else 10**9)
+        by_bin = {b: [i for i in passing if items.at[i, "length_bin"] == b] for b in bins}
+        quota = _quotas(max(need, 0), bins, {b: len(v) for b, v in by_bin.items()})
+        chosen = []
+        for b in bins:
+            by_src: dict[str, list] = {}
+            for i in by_bin[b]:
+                by_src.setdefault(items.at[i, "source"], []).append(i)
+            queues = list(by_src.values())
+            picked = []
+            while len(picked) < quota[b] and any(queues):
+                for qu in queues:
+                    if qu and len(picked) < quota[b]:
+                        picked.append(qu.pop(0))
+            chosen += picked
+        for i in passing:
+            if i in chosen:
+                items.at[i, "status"] = "selected"
+                items.at[i, "notes"] = f"auto-selected ({tag})"
+            else:
+                items.at[i, "status"] = "rejected"
+                items.at[i, "notes"] = f"reserve ({tag}): passed screening, not sampled"
+        sel = items[dom & (items.status == "selected")]
+        report[domain] = {
+            "needed": max(need, 0), "newly_selected": len(chosen), "screen_failed": len(failed),
+            "reserve": len(passing) - len(chosen), "selected_total": int(len(sel)),
+            "selected_by_bin": sel.length_bin.value_counts().sort_index().to_dict(),
+            "selected_by_source": sel.source.value_counts().to_dict(),
+            "shortfall": max(0, acfg["per_domain"] - int(len(sel))),
+        }
+    return items, report
+
+
 # ------------------------------------------------------------------ validation
 
 @dataclass

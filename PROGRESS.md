@@ -8,12 +8,13 @@ personal contact details.
 |---|---|---|
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
-| 2 | `02_preprocess.ipynb`: normalization (done in package) + sentence split + chunking + hierarchical pipeline | next |
+| 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **built, awaiting Colab run** |
 | 3 | `03_finetune.ipynb` | — |
 | 4 | `04_optimize.ipynb` | — |
 | 5 | `05_evaluate.ipynb` | — |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
-| — | Benchmark annotation: 240+ texts with human references | scaffold ready; needs org-report sources and annotators |
+| — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
+| — | Benchmark reference summaries | **human work outstanding** (writer + reviewer per guideline) |
 
 ## Decisions (2026-10-13)
 1. **Acceptance ROUGE** is measured on the internal benchmark (≥ 240 texts with long human
@@ -52,6 +53,34 @@ personal contact details.
     pandas, …) isn't downgraded; its exact versions are saved per run in
     `logs/env_*.json` and `logs/pip_freeze_*.txt`. The final lock file is assembled from these.
 
+## Decisions (2026-10-15)
+11. **GPU**: the user has a Colab T4. Fine-tuning goes ahead on T4 (AraBART fp16; AraT5v2 single run).
+12. **Benchmark items are automated** at the user's request: news items are picked from the 150
+    XL-Sum test candidates. Organizational reports are harvested from public Arabic pages of four
+    UN agencies (`tools/harvest_org_reports.py` → `benchmark_sources/org_reports.csv`, URLs plus
+    content hashes only; texts are fetched in Colab and never committed). Selection rules v1:
+    300–1000 words, ≥ 90% Arabic script, ≤ 15% numeric tokens, then 120 per domain spread
+    evenly over length bins and round-robin over sources, seed 42. Unsampled items are kept as
+    `reserve`.
+    *Caveat*: these are public agency press releases, statements and reports, the closest
+    openly available proxy for "organizational reports". If the client has real internal reports,
+    they should be added via `incoming_org/` and replace some of these.
+    **Reference summaries remain human-written** (proposal §11.1 and the original brief).
+    Harvest 2026-10-15: 180 pages, 45 per organization (WHO EMRO, UNICEF regional and country
+    offices, UNFPA, UN Women Arab States). By length bin: 52 / 70 / 58 (300–499 / 500–699 / 700–1000).
+13. ReliefWeb was considered for org reports, but its API needs an approved appname and its RSS has no
+    pagination or Arabic bodies. ESCWA is behind Cloudflare and the World Bank pages are rendered by JavaScript.
+14. **Pipeline**: one `Summarizer` with strategies `direct` (900/80 hierarchical, proposal §11.3),
+    `segmentwise` (320-token segments, strategy B), `hybrid` (TextRank extract 1.6× budget →
+    abstractive rewrite, strategy C), plus `extractive` and `lead` baselines. Word targets become
+    decoder token bounds via per-tokenizer tokens/word calibration (XL-Sum train sample).
+    The "final pass" is sentence dedup plus trimming to the length bound. An abstractive merge pass is
+    optional (`pipeline.merge`) and is evaluated in 05.
+15. **Baselines** pinned in config: Omar10lfc/arabart-xlsum-arabic (Apache-2.0, card ROUGE-1
+    34.99 on XL-Sum), kazed/AraBART-finetuned-xlsum-arabic, ahmeddbahaa/AraT5v2-base-1024-finetune-ar-xlsum,
+    omarsabri8756/AraT5v2-XLSum-arabic-text-summarization. Three of these have no license on the Hub,
+    so they are for comparison only.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -68,8 +97,6 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
   datasets 4.8.5, huggingface_hub 1.33. Note that `03` must target transformers v5 APIs.
 
 ## Next
-- Team (parallel, long lead time): select ≥ 120 of the 150 news candidates, collect ≥ 120
-  organizational-report texts, and write and review references per `docs/reference_guideline.md`.
-- Open question: is GPU available for fine-tuning (free Colab T4 / Kaggle)? If not, `03` uses
-  public XL-Sum fine-tuned checkpoints, with fine-tuning optional.
-- Build `02_preprocess.ipynb` (sentence splitter, chunker, segment-wise / hybrid pipeline, tests).
+- Team (parallel, long lead time): write and review the 240 reference summaries per `docs/reference_guideline.md`.
+- User re-runs `01_data.ipynb` (new cells 7–8: org reports + auto-selection), then runs `02_preprocess.ipynb` on T4.
+- Then: `03_finetune.ipynb`.

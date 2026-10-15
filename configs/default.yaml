@@ -60,6 +60,14 @@ benchmark:
   min_key_points: 3
   guideline_version: "1.0"
   min_arabic_ratio: 0.6      # share of letters that must be Arabic script
+  # Automatic item selection (documented, seeded, idempotent; see benchmark.auto_select).
+  auto_select:
+    rule_version: "1"
+    per_domain: 120
+    min_arabic_ratio: 0.9
+    max_digit_token_share: 0.15   # rejects table/number dumps
+  # Organizational-report URL list (committed; texts are fetched in Colab, never committed).
+  org_sources_csv: benchmark_sources/org_reports.csv
 
 # ------------------------------------------------------- normalization (02)
 normalization:
@@ -89,3 +97,68 @@ normalization:
     collapse_whitespace: true
     remove_punctuation: true
     lowercase_latin: true
+
+# ------------------------------------------------------- summarization pipeline (02)
+pipeline:
+  strategy: segmentwise      # direct | segmentwise | hybrid | extractive | lead
+  default_ratio: 0.20        # user-configurable at call time, clamped to [min_ratio, max_ratio]
+  min_ratio: 0.10
+  max_ratio: 0.30
+  min_words: 30
+  max_words: 300
+  length_tolerance: 0.20     # acceptable +/- around the target (within the hard limits)
+  chunking:                  # proposal §11.3
+    max_tokens: 900
+    overlap_tokens: 80
+    paragraph_break_min_fill: 0.6
+    special_tokens_reserve: 4
+  segmentwise:
+    segment_max_tokens: 320  # small segments -> about one XL-Sum-style sentence each
+    min_segment_words: 12
+  hybrid:
+    extract_expansion: 1.6   # extract 1.6x the word budget, then rewrite
+    position_weight: 0.3     # lead prior in TextRank scoring
+    group_max_tokens: 320
+  length_control:
+    tokens_per_word: 1.6     # replaced by the per-model calibration from 02_preprocess
+    min_factor: 0.8
+    max_factor: 1.25
+  dedup_sentence_threshold: 0.7
+  merge: none                # none | abstractive  (final abstractive re-summarization pass)
+
+# Decoding defaults; tuned on validation in 03 and saved to a separate file (proposal §11.4).
+decoding:
+  num_beams: 4
+  length_penalty: 1.0
+  no_repeat_ngram_size: 3
+  early_stopping: true
+
+# ------------------------------------------------------- models
+models:
+  arabart:
+    repo_id: moussaKam/AraBART
+    revision: cb67d617b84f52755c0cbf34684a41fe0f01cdb1
+    license: Apache-2.0
+    role: primary
+  arat5v2:
+    repo_id: UBC-NLP/AraT5v2-base-1024
+    revision: 3c74d91ba69456bf63c4657e37b0af39faecb26d
+    license: "research use only; commercial use requires the authors' approval (no license field on the Hub)"
+    role: comparison
+  baselines:                  # public XL-Sum fine-tunes; derived from CC BY-NC-SA data
+    arabart_xlsum_omar:
+      repo_id: Omar10lfc/arabart-xlsum-arabic
+      revision: c43dad77a8f6ac6319536f296bd0c260118a9efd
+      license: "Apache-2.0 (model card); trained on XL-Sum CC BY-NC-SA 4.0"
+    arabart_xlsum_kazed:
+      repo_id: kazed/AraBART-finetuned-xlsum-arabic
+      revision: f529516b9e01f06d13d133953ca2c30a13426fbb
+      license: "not stated on the Hub"
+    arat5v2_xlsum_ahmeddbahaa:
+      repo_id: ahmeddbahaa/AraT5v2-base-1024-finetune-ar-xlsum
+      revision: 05de0d3cbe1538ef661fbc544596c4f39d7fba52
+      license: "not stated; base model research-only"
+    arat5v2_xlsum_omarsabri:
+      repo_id: omarsabri8756/AraT5v2-XLSum-arabic-text-summarization
+      revision: b5e0b473a0d3b21735a92ff678e996e5e948bfa0
+      license: "not stated; base model research-only"

@@ -75,3 +75,38 @@ def test_full_data_pipeline(tmp_path, monkeypatch):
 
     # resumability: second run skips everything
     assert prepare.step_dedup(cfg)["finished_utc"] == m["finished_utc"]
+
+
+def test_org_fetch_and_auto_select(tmp_path, monkeypatch):
+    from arabic_summ.data import web_sources as W
+
+    archive = tmp_path / "fake.tar.bz2"
+    fake_archive(archive)
+    monkeypatch.setattr(xlsum, "download_archive", lambda xcfg, d: (archive, sha256_file(archive)))
+    pages = {f"https://org.example/{i}": text(350 + 40 * i, 7000 + i) for i in range(12)}
+    monkeypatch.setattr(W, "fetch", lambda url, **kw: url)              # "html" is the url itself
+    monkeypatch.setattr(W, "extract", lambda html: ("t", pages[html]))
+    repo = tmp_path / "repo"
+    (repo / "benchmark_sources").mkdir(parents=True)
+    pd.DataFrame([{"source_key": f"s{i % 3}", "org": f"Org {i % 3}", "url": u, "title": "t",
+                   "word_count": "", "length_bin": "", "content_hash": B.content_hash(t),
+                   "retrieved_date": "2026-10-15", "terms_url": "https://org.example/terms",
+                   "license_note": "research use"} for i, (u, t) in enumerate(pages.items())]
+                 ).to_csv(repo / "benchmark_sources/org_reports.csv", index=False)
+    cfg = load_config("configs/default.yaml", overrides={
+        "paths": {"root": str(tmp_path / "root"), "scratch": str(tmp_path / "scratch")},
+        "benchmark": {"news_candidates": 9, "min_per_domain": 6, "auto_select": {"per_domain": 6}},
+    })
+    prepare.step_download(cfg)
+    prepare.step_dedup(cfg)
+    prepare.step_benchmark_scaffold(cfg)
+
+    r = prepare.fetch_org_reports(cfg, repo, delay=0)
+    assert r["imported_new"] == 12 and r["hash_changed"] == 0 and not r["failed"]
+    assert prepare.fetch_org_reports(cfg, repo, delay=0)["imported_new"] == 0   # resumable
+
+    sel = prepare.run_auto_select(cfg)
+    assert sel["news"]["selected_total"] == 6 and sel["org_report"]["selected_total"] == 6
+    assert len(sel["org_report"]["selected_by_source"]) == 3
+    rep, leak = prepare.validate_benchmark(cfg)
+    assert leak["ok"] and rep.stats["active"] == 12   # only selected rows remain active

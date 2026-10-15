@@ -246,3 +246,57 @@ def validate_benchmark(cfg, strict: bool = False, index_cache: tuple | None = No
         "leakage": {k: leak[k] for k in ("ok", "items_checked", "n_leaks", "checked_utc")},
     })
     return rep, leak
+
+
+# ------------------------------------------------------------------ organizational reports + selection
+
+def fetch_org_reports(cfg, repo_root: Path | str = ".", delay: float = 1.0) -> dict:
+    """Fetch the committed org-report URL list into benchmark/incoming_org/ and import it.
+
+    Already-downloaded files are skipped (resumable). A text whose content hash differs from the
+    recorded one (page edited since harvesting) is still imported but noted in `notes`.
+    """
+    import time
+
+    from . import web_sources as W
+
+    bcfg = cfg["benchmark"]
+    urls = pd.read_csv(Path(repo_root) / bcfg["org_sources_csv"], dtype=str, keep_default_na=False)
+    bdir = C.path(cfg, "benchmark")
+    incoming = bdir / "incoming_org_web"   # manual uploads stay in incoming_org/
+    incoming.mkdir(parents=True, exist_ok=True)
+    meta, fetched, failed, changed = [], 0, [], 0
+    for i, r in urls.iterrows():
+        name = f"{r.source_key}_{i:03d}.txt"
+        f = incoming / name
+        note = ""
+        if not f.exists():
+            try:
+                _, text = W.extract(W.fetch(W.iri_to_uri(r.url)))
+            except RuntimeError as e:
+                failed.append(r.url)
+                print("  fetch failed:", e)
+                continue
+            f.write_text(text, encoding="utf-8")
+            fetched += 1
+            time.sleep(delay)
+        if B.content_hash(f.read_text(encoding="utf-8")) != r.content_hash:
+            note = "page content changed since harvesting (hash differs from org_reports.csv)"
+            changed += 1
+        meta.append({"file_name": name, "source": r.org, "source_url": r.url,
+                     "license": f"{r.license_note} Terms: {r.terms_url}",
+                     "retrieved_date": utc_now()[:10], "notes": note})
+    src_csv = incoming / "sources.csv"
+    B.write_csv(pd.DataFrame(meta, columns=B.SOURCE_COLUMNS), src_csv)
+    added = B.import_text_folder(bdir, incoming, "org_report", bcfg, src_csv)
+    return {"urls": int(len(urls)), "fetched_now": fetched, "failed": failed,
+            "hash_changed": changed, "imported_new": int(len(added))}
+
+
+def run_auto_select(cfg) -> dict:
+    bdir = C.path(cfg, "benchmark")
+    items = B.read_csv(bdir / B.ITEMS_FILE)
+    items, report = B.auto_select(items, cfg["benchmark"], cfg["project"]["seed"])
+    B.write_csv(items, bdir / B.ITEMS_FILE)
+    write_json(bdir / "auto_select_report.json", {"run_utc": utc_now(), **report})
+    return report

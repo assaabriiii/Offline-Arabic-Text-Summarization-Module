@@ -160,3 +160,55 @@ def test_select_news_candidates_stratified():
     assert not set(items.source_id) & {f"id{i}" for i in range(0, 300, 50)}
     again = B.select_news_candidates(test, cfg, seed=42)
     assert list(again.source_id) == list(items.source_id)  # deterministic
+
+
+def _candidates(n_per_bin, domain="news", sources=("A", "B")):
+    specs, k = [], 0
+    for lo in (320, 550, 800):
+        for j in range(n_per_bin):
+            specs.append((f"X-{k:04d}", domain, lo + j, 500 + k))
+            k += 1
+    df = make_items(specs)
+    df["status"] = "candidate"
+    df["length_bin"] = df.word_count.astype(int).map(lambda n: B.length_bin(n, BCFG["length_bins"]))
+    df["source"] = [sources[i % len(sources)] for i in range(len(df))]
+    return df
+
+
+def test_screen_rules():
+    assert B.screen(arabic_text(400, 1), BCFG) == ""
+    assert "length" in B.screen(arabic_text(100, 1), BCFG)
+    numeric = " ".join(["123"] * 100) + " " + arabic_text(300, 2)
+    assert "number-heavy" in B.screen(numeric, BCFG)
+
+
+def test_auto_select_balanced_and_idempotent():
+    cfg = {**BCFG, "domains": ["news"], "auto_select": {**BCFG["auto_select"], "per_domain": 12}}
+    items = _candidates(10)
+    items.loc[0, "text"] = arabic_text(100, 9)  # fails screening
+    out, rep = B.auto_select(items, cfg, seed=42)
+    sel = out[out.status == "selected"]
+    assert len(sel) == 12 and rep["news"]["screen_failed"] == 1
+    assert sel.length_bin.value_counts().to_dict() == {"300-499": 4, "500-699": 4, "700-1000": 4}
+    assert sel.source.value_counts().to_dict() == {"A": 6, "B": 6}
+    assert (out.status != "candidate").all()
+    assert out.loc[0, "notes"].startswith("auto-screen")
+    again, rep2 = B.auto_select(out, cfg, seed=42)
+    assert again.equals(out) and rep2["news"]["newly_selected"] == 0
+    # deterministic
+    out2, _ = B.auto_select(items, cfg, seed=42)
+    assert list(out2.status) == list(out.status)
+
+
+def test_auto_select_redistributes_short_bins():
+    cfg = {**BCFG, "domains": ["news"], "auto_select": {**BCFG["auto_select"], "per_domain": 12}}
+    items = _candidates(10)
+    items = items[~items.length_bin.eq("700-1000")].reset_index(drop=True)  # one bin empty
+    out, rep = B.auto_select(items, cfg, seed=1)
+    assert rep["news"]["selected_total"] == 12 and rep["news"]["shortfall"] == 0
+
+
+def test_web_clean_text_cuts_boilerplate():
+    from arabic_summ.data.web_sources import clean_text
+    body = "فقرة أولى عن التقرير.\nفقرة ثانية.\nنبذة عن اليونيسف\nتعمل اليونيسف في أكثر من 190 بلدا."
+    assert clean_text(body) == "فقرة أولى عن التقرير.\nفقرة ثانية."
