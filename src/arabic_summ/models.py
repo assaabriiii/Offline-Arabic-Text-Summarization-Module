@@ -36,12 +36,45 @@ def load_tokenizer(path_or_repo: str, revision: str | None = None, **kw):
     from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
     try:
-        return AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw)
+        return ensure_special_tokens(AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw))
     except (TypeError, ValueError):
         # also: a tokenizer saved by transformers 5 declares `TokenizersBackend`, unknown to 4.x (ONNX env)
         tok = PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
         tok.model_input_names = ["input_ids", "attention_mask"]   # seq2seq models take no token_type_ids
+        return ensure_special_tokens(tok)
+
+
+def ensure_special_tokens(tok):
+    """Make encodings end with EOS (and start with BOS where the tokenizer has one).
+
+    transformers 5 builds AraBART's sentencepiece `BarthezTokenizer` without the post-processor
+    that adds `<s> ... </s>`, so sources and *labels* came out with no special tokens: the model
+    never saw where a summary ends and fine-tuning collapsed to empty outputs (03 run, 2026-10-16).
+    Installs the BART-style template (`<s> $A </s>`, or `$A </s>` for tokenizers without BOS,
+    e.g. T5) only when the tokenizer doesn't already append EOS.
+    """
+    eos, eos_t = tok.eos_token_id, tok.eos_token
+    if eos is None:
         return tok
+    ids = tok("ا")["input_ids"]
+    if ids and ids[-1] == eos:
+        return tok
+    backend = getattr(tok, "backend_tokenizer", None) or getattr(tok, "_tokenizer", None)
+    if backend is None:
+        raise RuntimeError(f"{type(tok).__name__} does not append EOS and has no fast backend to fix")
+    from tokenizers.processors import TemplateProcessing
+
+    bos, bos_t = tok.bos_token_id, tok.bos_token
+    if bos is not None:
+        single, pair = f"{bos_t} $A {eos_t}", f"{bos_t} $A {eos_t} {eos_t} $B {eos_t}"
+        special = [(bos_t, bos), (eos_t, eos)]
+    else:
+        single, pair, special = f"$A {eos_t}", f"$A {eos_t} $B {eos_t}", [(eos_t, eos)]
+    backend.post_processor = TemplateProcessing(single=single, pair=pair, special_tokens=special)
+    ids = tok("ا")["input_ids"]
+    if not ids or ids[-1] != eos:
+        raise RuntimeError(f"could not make {type(tok).__name__} append EOS")
+    return tok
 
 
 def calibration_path(cfg: Mapping) -> Path:

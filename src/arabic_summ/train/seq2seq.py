@@ -24,8 +24,9 @@ def run_dir(cfg: Mapping, name: str) -> Path:
     return C.path(cfg, "models", "runs", name, "x").parent
 
 
-def run_name(model_key: str, lr: float, fraction: float) -> str:
-    return f"{model_key}_lr{lr:g}_f{fraction:g}"
+def run_name(model_key: str, lr: float, fraction: float, tag: str | None = None) -> str:
+    """`tag` versions runs, so a code fix never resumes checkpoints of an older, broken run."""
+    return f"{model_key}_lr{lr:g}_f{fraction:g}" + (f"_{tag}" if tag else "")
 
 
 def training_args(**kw):

@@ -402,12 +402,14 @@ eval_rows = tokenize(ev)
 grid_df = D.sample_fraction(train_f, TR["grid_train_fraction"], SEED)
 print(f"filtered train {len(train_f)} | grid subset {len(grid_df)} | eval {len(ev)} | decoding-tune {len(tune_df)}")
 print("truncated sources in eval:", sum(len(r["input_ids"]) >= FT["max_source_tokens"] for r in eval_rows))
+assert eval_rows[0]["labels"][-1] == tok.eos_token_id and eval_rows[0]["input_ids"][-1] == tok.eos_token_id, "labels/sources must end with EOS"
+print("special tokens ok: source", eval_rows[0]["input_ids"][:2], "...", eval_rows[0]["input_ids"][-2:], "| labels end", eval_rows[0]["labels"][-2:])
 '''), code('''
 # ==== 7. AraBART learning-rate grid (resumable; rerun this cell after a disconnect) =====
 grid_rows = tokenize(grid_df)
 grid = []
 for lr in TR["learning_rates"]:
-    name = S2S.run_name("arabart", lr, TR["grid_train_fraction"])
+    name = S2S.run_name("arabart", lr, TR["grid_train_fraction"], TR.get("run_tag"))
     hp = {**TR, "learning_rate": lr, "max_target_tokens": FT["max_target_tokens"]}
     r = S2S.train_run(cfg, name, AB, tok, grid_rows, eval_rows, list(ev.summary), list(ev.text), hp,
                       extra_meta={"stage": "lr_grid"})
@@ -416,14 +418,14 @@ grid_df_res = pd.DataFrame(grid)
 display(grid_df_res[["lr", "epochs", "rouge1", "rouge2", "rougeL", "number_precision", "numbers_ok_share",
                      "novel_rate", "gen_words"]].round(4))
 BEST_LR = select_best(grid, **FT["select"])["lr"]
-write_json(C.path(cfg, "models", "runs", "lr_grid_summary.json"), {"rows": grid, "selected_lr": BEST_LR})
+write_json(C.path(cfg, "models", "runs", f"lr_grid_summary_{TR.get('run_tag')}.json"), {"rows": grid, "selected_lr": BEST_LR})
 print("selected learning rate:", BEST_LR)
 '''), code('''
 # ==== 8. Final AraBART run: selected LR, 100 % of filtered train (resumable) ============
 del grid_rows
 frac = TR["final_train_fraction"]
 final_rows = tokenize(D.sample_fraction(train_f, frac, SEED))
-FINAL_NAME = S2S.run_name("arabart", BEST_LR, frac)
+FINAL_NAME = S2S.run_name("arabart", BEST_LR, frac, TR.get("run_tag"))
 FINAL = S2S.train_run(cfg, FINAL_NAME, AB, tok, final_rows, eval_rows, list(ev.summary), list(ev.text),
                       {**TR, "learning_rate": BEST_LR, "max_target_tokens": FT["max_target_tokens"]},
                       extra_meta={"stage": "final"})
@@ -447,7 +449,7 @@ if RUN_ARAT5:
     hp5 = {**TR, **FT["arat5v2"], "max_target_tokens": FT["max_target_tokens"]}
     t5_rows = tokenize(grid_df, tok5)
     t5_eval = tokenize(ev, tok5)
-    R5 = S2S.train_run(cfg, S2S.run_name("arat5v2", hp5["learning_rate"], TR["grid_train_fraction"]), T5, tok5,
+    R5 = S2S.train_run(cfg, S2S.run_name("arat5v2", hp5["learning_rate"], TR["grid_train_fraction"], TR.get("run_tag")), T5, tok5,
                        t5_rows, t5_eval, list(ev.summary), list(ev.text), hp5, extra_meta={"stage": "arat5_comparison"})
     same_lr = next((g for g in grid if abs(g["lr"] - hp5["learning_rate"]) < 1e-12), None)
     cmp = [{"model": "arat5v2", "lr": hp5["learning_rate"], **R5["best"]}]

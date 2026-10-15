@@ -127,3 +127,30 @@ def test_train_run_end_to_end_resumable(tmp_path):
     out = tmp_path / "root" / "models" / "tiny_ft"
     assert json.loads((out / "decoding.json").read_text()) == {"num_beams": 2}
     assert "model.safetensors" in prov["files"] and len(prov["files"]["model.safetensors"]["sha256"]) == 64
+
+
+def test_ensure_special_tokens_adds_missing_eos_template():
+    tr = pytest.importorskip("transformers")
+    from tokenizers import Tokenizer, models, pre_tokenizers
+
+    from arabic_summ.models import ensure_special_tokens
+
+    vocab = {"<s>": 0, "<pad>": 1, "</s>": 2, "<unk>": 3, "قال": 4, "الوزير": 5}
+    tk = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()     # no post-processor: like v5 BarthezTokenizer
+    tok = tr.PreTrainedTokenizerFast(tokenizer_object=tk, bos_token="<s>", eos_token="</s>", pad_token="<pad>",
+                                     unk_token="<unk>")
+    assert tok("قال الوزير")["input_ids"] == [4, 5]
+    tok = ensure_special_tokens(tok)
+    assert tok("قال الوزير")["input_ids"] == [0, 4, 5, 2]
+    assert tok(text_target="قال الوزير")["input_ids"] == [0, 4, 5, 2]
+    assert tok("قال الوزير الوزير", max_length=3, truncation=True)["input_ids"][-1] == 2
+    # already-correct tokenizers are left alone
+    assert ensure_special_tokens(tok)("قال")["input_ids"] == [0, 4, 2]
+
+
+def test_run_name_tag():
+    from arabic_summ.train.seq2seq import run_name
+
+    assert run_name("arabart", 3e-5, 0.25) == "arabart_lr3e-05_f0.25"
+    assert run_name("arabart", 3e-5, 0.25, "r2") == "arabart_lr3e-05_f0.25_r2"

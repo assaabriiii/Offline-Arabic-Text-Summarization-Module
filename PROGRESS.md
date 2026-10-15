@@ -138,6 +138,17 @@ personal contact details.
     which transformers 4.57 rejects). Fixed while testing it: tokenizers saved by transformers 5 and loaded under
     4.x emitted `token_type_ids`, which BART's `generate` rejects.
 
+21. **First 03 run (r1, Colab T4, 2026-10-16) collapsed and was stopped**: on the grid run lr 1e-5, ROUGE-1
+    fell 0.044 → 0.004 → 0.0003 and generated length 102 → 9 → 0.8 words over 3 epochs. Cause: transformers 5
+    builds AraBART's sentencepiece `BarthezTokenizer` without the `<s> … </s>` post-processor, so sources and
+    labels had no special tokens and the model never learned where a summary ends. Fix: `models.ensure_special_tokens`
+    installs the BART template when EOS is missing (regression test added); 03 cell 6 now asserts sources and
+    labels end with EOS. Runs are versioned (`finetune.train.run_tag: r2`) so the broken r1 checkpoints on
+    Drive are never resumed. The r1 GPU time stays in the ledger.
+    Filter result from that run (valid, unaffected by the bug): 37,361 → 18,914 train pairs kept (50.6 %);
+    17.3 % of XL-Sum highlights contain a number absent from their article; median novel-content rate 0.43,
+    so the threshold was relaxed from 0.35 to 0.467 to keep half.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
