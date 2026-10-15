@@ -51,7 +51,41 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("spec", type=Path)
     p.add_argument("out", type=Path)
 
+    p = sub.add_parser("summarize", help="summarize Arabic text offline (file, or stdin with '-')")
+    p.add_argument("--model-dir", required=True, type=Path)
+    p.add_argument("--input", default="-", help="UTF-8 text file, or - for stdin")
+    p.add_argument("--ratio", type=float)
+    p.add_argument("--strategy", choices=["segmentwise", "hybrid", "direct", "extractive", "lead"])
+    p.add_argument("--threads", type=int)
+    p.add_argument("--json", action="store_true", help="print the full result as JSON")
+
+    p = sub.add_parser("serve", help="local web UI (Gradio) on 127.0.0.1")
+    p.add_argument("--model-dir", required=True, type=Path)
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=7860)
+    p.add_argument("--threads", type=int)
+
     args = ap.parse_args(argv)
+    if args.cmd in ("summarize", "serve"):
+        from .app.service import SummarizerService, force_offline
+
+        force_offline()
+        cfg = _cfg(args)
+        svc = SummarizerService(cfg, args.model_dir, threads=args.threads)
+        if args.cmd == "serve":
+            from .app.web import build, launch
+
+            launch(build(svc, cfg), args.host, args.port)
+            return 0
+        import json as _json
+
+        text = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8-sig")
+        res = svc.summarize(text, ratio=args.ratio, strategy=args.strategy)
+        print(_json.dumps(res, ensure_ascii=False, indent=1) if args.json else res["summary"])
+        if not args.json:
+            print(f"\n[{res['input_words']} -> {res['output_words']} words, bounds {res['bounds']}, "
+                  f"{res['seconds']['total']} s, {res['variant']}]", file=sys.stderr)
+        return 0
     if args.cmd == "summarize-batch":
         from .eval import run_batch
 

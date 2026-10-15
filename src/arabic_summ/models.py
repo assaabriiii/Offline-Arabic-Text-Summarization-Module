@@ -39,7 +39,9 @@ def load_tokenizer(path_or_repo: str, revision: str | None = None, **kw):
         return AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw)
     except (TypeError, ValueError):
         # also: a tokenizer saved by transformers 5 declares `TokenizersBackend`, unknown to 4.x (ONNX env)
-        return PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
+        tok = PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
+        tok.model_input_names = ["input_ids", "attention_mask"]   # seq2seq models take no token_type_ids
+        return tok
 
 
 def calibration_path(cfg: Mapping) -> Path:

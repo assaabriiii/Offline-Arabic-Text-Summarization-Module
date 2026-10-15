@@ -69,6 +69,7 @@ class HFBackend:
                 part = idx[j : j + self.batch_size]
                 enc = self.tokenizer([requests[k].text for k in part], return_tensors="pt", padding=True,
                                      truncation=True, max_length=self.max_input_tokens).to(self.device)
+                enc.pop("token_type_ids", None)
                 with self.torch.inference_mode():
                     cap = (self.max_positions - 2) if self.max_positions else hi
                     ids = self.model.generate(**enc, **gen, min_new_tokens=min(lo, cap), max_new_tokens=min(hi, cap))

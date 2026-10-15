@@ -7,5 +7,7 @@ optimum==2.1.0
 onnx==1.23.2
 onnxruntime==1.31.0
 transformers==4.57.6
+huggingface_hub==0.36.2   # Colab ships hub 1.x; transformers 4.57 needs < 1.0
+tokenizers==0.22.2
 PyYAML==6.0.2
 pyarabic==0.6.15

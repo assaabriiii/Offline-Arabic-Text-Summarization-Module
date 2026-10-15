@@ -20,7 +20,17 @@ def export_fp32(model_dir: str | Path, out_dir: str | Path) -> list[str]:
     for name in COPY:
         if (Path(model_dir) / name).exists():
             shutil.copy2(Path(model_dir) / name, out / name)
+    _write_runtime(out, "onnx_fp32")
     return sorted(p.name for p in out.glob("*.onnx"))
+
+
+def _write_runtime(d: Path, variant: str) -> None:
+    import json
+
+    rt = d / "runtime.json"
+    data = json.loads(rt.read_text(encoding="utf-8")) if rt.exists() else {}
+    data["variant"] = variant
+    rt.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def quantize_int8(fp32_dir: str | Path, out_dir: str | Path, arch: str = "avx2") -> list[str]:
@@ -42,4 +52,5 @@ def quantize_int8(fp32_dir: str | Path, out_dir: str | Path, arch: str = "avx2")
     for p in src.iterdir():
         if p.is_file() and p.suffix != ".onnx" and not p.name.endswith(".onnx_data") and not (out / p.name).exists():
             shutil.copy2(p, out / p.name)
+    _write_runtime(out, "onnx_int8")
     return names

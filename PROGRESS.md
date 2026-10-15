@@ -12,7 +12,7 @@ personal contact details.
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **built, awaiting Colab T4 run** |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
-| 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
+| 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
 
@@ -126,6 +126,18 @@ personal contact details.
     (95 % CI 0.359–0.380), extractive 0.352; both 100 % length-compliant. The 0.40 target is therefore above
     simple extraction on this benchmark.
 
+20. **MVP + bench**: one `SummarizerService` loads a self-contained model folder (weights, tokenizer,
+    `decoding.json`, `runtime.json` with variant / tokens-per-word / strategy) and sets the Hugging Face offline
+    switches before loading, so no network call is attempted. CLI: `python -m arabic_summ summarize`; local web UI:
+    `python -m arabic_summ serve` (Gradio bound to 127.0.0.1, analytics off). Every result carries the
+    fact-check flag (numbers not found in the input). `bench/run_bench.py` is the acceptance runner for the 8-core
+    machine: batch 1, preloaded model, warm-up, per-sample input length and latency, CPU model / threads / OS,
+    peak RSS, weight size, outbound-network probe; exit code 0 only if every hard criterion passes.
+    **One offline runtime env** (`requirements/cpu-runtime.txt`, Python 3.13) runs both PyTorch and ONNX
+    variants: transformers 4.57.6 + optimum-onnx + onnxruntime + Gradio 5.50 (Gradio 6 needs huggingface-hub ≥ 1,
+    which transformers 4.57 rejects). Fixed while testing it: tokenizers saved by transformers 5 and loaded under
+    4.x emitted `token_type_ids`, which BART's `generate` rejects.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -179,4 +191,4 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
 - Then `04_optimize.ipynb` on a CPU runtime (can be dry-run on the public baseline now).
 - Then `05_evaluate.ipynb` (T4); human raters fill the sheets it writes.
-- Next to build: MVP (CLI + Gradio), `bench/`, docs (English + Persian summary).
+- Next: install-and-run guide (English + Persian summary) and architecture notes.

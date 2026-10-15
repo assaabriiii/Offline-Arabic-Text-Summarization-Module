@@ -636,6 +636,8 @@ if not DRY_RUN:
     shutil.copytree(best["model_dir"], dest)
     write_json(dest / "decoding.json", DECODING)
     write_json(dest / "runtime.json", {"variant": best["variant"], **VARIANTS[best["variant"]],
+                                       "tokens_per_word": M.tokens_per_word(cfg, "arabart"),
+                                       "strategy": cfg["pipeline"]["strategy"], "max_input_tokens": 1024,
                                        "requirements": "requirements/colab-onnx.txt" if VARIANTS[best["variant"]]["runtime"] == "onnx" else "torch",
                                        "measured": {k: best[k] for k in cols if k in best}, "source_model": str(SRC_DIR)})
     prepare.update_manifest(cfg, "optimize", {"selected": best["variant"], "export": str(dest),

@@ -1,0 +1,24 @@
+# Offline CPU runtime for the MVP (CLI + web UI) and bench/ on the reference machine.
+# Python 3.13 (optimum 2.1 breaks on Python 3.14). Runs both PyTorch and ONNX Runtime variants.
+# Tested together on 2026-10-15 (tests/test_app.py, tests/test_optimize.py).
+# Offline install: on a connected machine with the same OS/arch/Python run
+#   pip download -r requirements/cpu-runtime.txt -d wheelhouse --extra-index-url https://download.pytorch.org/whl/cpu
+# copy `wheelhouse/` over, then: pip install --no-index --find-links wheelhouse -r requirements/cpu-runtime.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1
+transformers==4.57.6
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface_hub==0.36.2
+optimum==2.1.0
+optimum-onnx==0.1.0
+onnx==1.23.2
+onnxruntime==1.31.0
+gradio==5.50.0
+gradio_client==1.14.0
+numpy==2.5.4
+pandas==2.3.3
+pyarrow==26.0.0
+PyYAML==6.0.3
+pyarabic==0.6.15
+psutil==7.2.2
