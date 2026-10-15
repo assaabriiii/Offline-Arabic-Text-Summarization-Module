@@ -96,6 +96,29 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Colab image observed: Python 3.13, torch 2.11 (CPU build on a CPU runtime), transformers 5.18,
   datasets 4.8.5, huggingface_hub 1.33. Note that `03` must target transformers v5 APIs.
 
+## 02_preprocess results (Colab T4, 2026-10-15, commit a5eb9c4)
+- Tokens per word (XL-Sum train sample, n=2000): AraBART 1.276 article / 1.237 summary;
+  AraT5v2 1.299 / 1.257.
+- News benchmark candidates (150): median 748 AraBART tokens, max 1384. **33% exceed 900 tokens and
+  23% exceed 1024**, so chunking is needed for about a third of inputs.
+- Chunking on NEWS-0135 (1000 words): direct = 2 chunks [897, 456]; segmentwise = 5 chunks of 249–317 tokens.
+- Smoke run (Omar10lfc/arabart-xlsum-arabic, fp16, 9 news texts, ratio 0.2): length compliance
+  direct 0.83, all others 1.0. Median time on T4: direct 1.33 s, segmentwise 1.08 s, hybrid 1.08 s.
+- **Faithfulness problem (critical for the ≥ 80% factual-accuracy target):** on NEWS-0029 every
+  abstractive strategy invented facts. Examples: Houthis "attacking the intelligence HQ" (the source
+  says resistance committees attacked Houthi police), plus "Sanaa", "Ibb" and a "رفض" movement, none
+  of which appear in the article. Two likely causes: XL-Sum highlights often contain information
+  that isn't in the article, so the model learned to add facts; and forcing a model trained on
+  ~25-word outputs to write 80+ words (min_new_tokens) pushes it to pad.
+  Implications for 03:
+  (a) filter XL-Sum training pairs for faithfulness (entity/number precision of the summary against
+      its article) before fine-tuning;
+  (b) build the factual checker now (moved forward from 05) and use it in model and decoding selection;
+  (c) prefer strategies whose per-call compression is mild (hybrid rewrite) and keep extractive as
+      a guaranteed-faithful fallback.
+- The run had not yet picked up 01's new cells: only 150 news candidates, no org reports and no
+  selection. `01_data` cells 7–9 still need to run.
+
 ## Next
 - Team (parallel, long lead time): write and review the 240 reference summaries per `docs/reference_guideline.md`.
 - User re-runs `01_data.ipynb` (new cells 7–8: org reports + auto-selection), then runs `02_preprocess.ipynb` on T4.
