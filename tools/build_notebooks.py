@@ -318,7 +318,211 @@ for st in STRATEGIES:
     return notebook(cells, gpu=True)
 
 
-NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02}
+def nb03() -> dict:
+    cells = [md('''
+# 03 · Fine-tuning AraBART (+ one AraT5v2 comparison run) on faithfulness-filtered XL-Sum
+
+**What this does** (proposal stage 4; PROGRESS decisions 2, 3, 11, 17)
+1. Checks the GPU and prints the **GPU-hour ledger** (every training session is logged to `logs/gpu_ledger/`).
+2. Runs the **fact checker** (`eval.facts`: unsupported numbers + novel content words) on the 02 smoke
+   outputs to show it catches the hallucinations found there.
+3. **Filters XL-Sum train**: drops pairs whose highlight has a number missing from the article or too many
+   unsupported content words. Validation / test are untouched. Cached on Drive.
+4. **LR grid** for AraBART: 1e-5 / 3e-5 / 5e-5, ≤ 5 epochs, effective batch 16, early stopping (patience 2),
+   seed 42, on a seeded 25 % of the filtered train set (T4 budget); per-epoch validation ROUGE + fact check
+   on 500 fixed validation articles. Selection: best ROUGE-1 among runs within 0.02 of the best number precision.
+5. **Final AraBART run** with the selected LR on 100 % of the filtered train set.
+6. **AraT5v2** single comparison run (fp32, same 25 % subset) vs. the AraBART run with the same LR.
+7. **Decoding tuning** on 300 other validation articles: beams 1–4 × length penalty 1/1.5/2, no-repeat 3.
+8. **Export** `models/arabart_ft/` with `decoding.json` (separate file, proposal) and `provenance.json`
+   (file SHA256s, base revision, data + filter records, metrics, commit, environment, GPU hours).
+9. Sanity check on 6 benchmark texts: length compliance + fact check vs. the public baseline (no ROUGE here).
+
+**Runtime: T4 GPU.** Every run is **resumable**: if Colab disconnects, reconnect, run cells 0–1, then rerun the
+cell you were in. Finished runs are skipped; an interrupted run resumes from its last epoch checkpoint on Drive.
+Rough T4 estimate (not yet measured): filter ~3 min, each grid run ~0.5–1.5 h, final run ~2–5 h,
+AraT5v2 (fp32) ~1–3 h, decoding grid ~20 min. Colab free sessions end after a few hours: just resume.
+'''), *setup_cells("03_finetune", "requirements/colab-data.txt"), code('''
+# ==== 3. GPU + ledger ==================================================================
+import json, torch, pandas as pd
+from arabic_summ import config as C, models as M
+from arabic_summ.data import prepare, benchmark as B
+from arabic_summ.eval import facts as F
+from arabic_summ.io_utils import mark_step_done, read_json, sha256_file, step_done, write_json
+from arabic_summ.text.normalize import NormalizationPolicy, normalize
+from arabic_summ.train import data as D, decoding as DEC, ledger as L, seq2seq as S2S
+from arabic_summ.train.select import select_best
+assert torch.cuda.is_available(), "No GPU: Runtime > Change runtime type > T4 GPU"
+print(torch.cuda.get_device_name(0), "| ledger so far:", L.summary(cfg))
+FT, TR = cfg["finetune"], cfg["finetune"]["train"]
+SEED = TR["seed"]
+POLICY = NormalizationPolicy.from_dict(cfg["normalization"]["model"])
+'''), code('''
+# ==== 4. Fact checker on the 02 smoke-run outputs ======================================
+demo = C.path(cfg, "logs") / "02_pipeline_demo" / "results.jsonl"
+items = B.read_csv(C.path(cfg, "benchmark") / B.ITEMS_FILE).set_index("sample_id")
+if demo.exists():
+    d = pd.read_json(demo, lines=True)
+    reps = [F.check(s, items.text[i]) for s, i in zip(d.summary, d.sample_id)]
+    d["number_precision"] = [r.number_precision for r in reps]
+    d["numbers_ok"] = [r.numbers_ok for r in reps]
+    d["novel_rate"] = [r.novel_rate for r in reps]
+    display(d.groupby("strategy")[["numbers_ok", "novel_rate"]].mean().round(3))
+    ex = d[(d.sample_id == d.sample_id.iloc[0]) & (d.strategy == "segmentwise")].iloc[0]
+    r = F.check(ex.summary, items.text[ex.sample_id])
+    print(ex.sample_id, "segmentwise | unsupported numbers:", r.unsupported_numbers, "| novel:", r.novel_content[:20])
+else:
+    print("02 smoke outputs not found; skipping")
+'''), code('''
+# ==== 5. Faithfulness filter for XL-Sum train (cached) =================================
+filt_path = C.path(cfg, "processed", "train_filtered.parquet")
+rep_path = C.path(cfg, "processed", "train_filter_report.json")
+if not step_done(cfg, "03_train_filter"):
+    train = prepare.load_processed(cfg, "train")
+    table = D.faithfulness_table(train)
+    kept, rep = D.filter_pairs(train, FT["filter"], table)
+    kept.to_parquet(filt_path)
+    table.to_parquet(C.path(cfg, "processed", "train_faithfulness.parquet"))
+    rep["filter_config"] = FT["filter"]
+    write_json(rep_path, rep)
+    prepare.update_manifest(cfg, "train_filter", {**rep, "output": str(filt_path), "sha256": sha256_file(filt_path)})
+    mark_step_done(cfg, "03_train_filter", outputs=[filt_path, rep_path])
+FILTER_REPORT = read_json(rep_path)
+print(json.dumps(FILTER_REPORT, ensure_ascii=False, indent=1))
+train_f = pd.read_parquet(filt_path)
+'''), code('''
+# ==== 6. Validation subsets + tokenization =============================================
+val = prepare.load_processed(cfg, "validation")
+ev = val.sample(TR["eval_samples"], random_state=SEED)                                   # per-epoch selection
+tune_df = val.drop(ev.index).sample(FT["decoding_grid"]["samples"], random_state=SEED)  # decoding tuning
+AB = M.model_entry(cfg, "arabart")
+tok = M.load_tokenizer(AB["repo_id"], revision=AB["revision"])
+tokenize = lambda df, t=tok: D.tokenize_pairs(df, t, POLICY, FT["max_source_tokens"], FT["max_target_tokens"])
+eval_rows = tokenize(ev)
+grid_df = D.sample_fraction(train_f, TR["grid_train_fraction"], SEED)
+print(f"filtered train {len(train_f)} | grid subset {len(grid_df)} | eval {len(ev)} | decoding-tune {len(tune_df)}")
+print("truncated sources in eval:", sum(len(r["input_ids"]) >= FT["max_source_tokens"] for r in eval_rows))
+'''), code('''
+# ==== 7. AraBART learning-rate grid (resumable; rerun this cell after a disconnect) =====
+grid_rows = tokenize(grid_df)
+grid = []
+for lr in TR["learning_rates"]:
+    name = S2S.run_name("arabart", lr, TR["grid_train_fraction"])
+    hp = {**TR, "learning_rate": lr, "max_target_tokens": FT["max_target_tokens"]}
+    r = S2S.train_run(cfg, name, AB, tok, grid_rows, eval_rows, list(ev.summary), list(ev.text), hp,
+                      extra_meta={"stage": "lr_grid"})
+    grid.append({"lr": lr, "run": name, "epochs": r["epochs_run"], **r["best"]})
+grid_df_res = pd.DataFrame(grid)
+display(grid_df_res[["lr", "epochs", "rouge1", "rouge2", "rougeL", "number_precision", "numbers_ok_share",
+                     "novel_rate", "gen_words"]].round(4))
+BEST_LR = select_best(grid, **FT["select"])["lr"]
+write_json(C.path(cfg, "models", "runs", "lr_grid_summary.json"), {"rows": grid, "selected_lr": BEST_LR})
+print("selected learning rate:", BEST_LR)
+'''), code('''
+# ==== 8. Final AraBART run: selected LR, 100 % of filtered train (resumable) ============
+del grid_rows
+frac = TR["final_train_fraction"]
+final_rows = tokenize(D.sample_fraction(train_f, frac, SEED))
+FINAL_NAME = S2S.run_name("arabart", BEST_LR, frac)
+FINAL = S2S.train_run(cfg, FINAL_NAME, AB, tok, final_rows, eval_rows, list(ev.summary), list(ev.text),
+                      {**TR, "learning_rate": BEST_LR, "max_target_tokens": FT["max_target_tokens"]},
+                      extra_meta={"stage": "final"})
+del final_rows
+display(pd.DataFrame(FINAL["per_epoch"])[["epoch", "rouge1", "rouge2", "rougeL", "number_precision", "novel_rate", "loss"]].round(4))
+print("best:", {k: FINAL["best"][k] for k in ("epoch", "rouge1", "rouge2", "rougeL", "number_precision")})
+'''), code('''
+# ==== 9. AraT5v2 single comparison run (fp32; set RUN_ARAT5=False to skip) ==============
+RUN_ARAT5 = True
+if RUN_ARAT5:
+    from transformers import AutoConfig
+    T5 = M.model_entry(cfg, "arat5v2")
+    tok5 = M.load_tokenizer(T5["repo_id"], revision=T5["revision"])
+    c5 = AutoConfig.from_pretrained(T5["repo_id"], revision=T5["revision"])
+    if tok5.pad_token is None:
+        tok5.pad_token = tok5.convert_ids_to_tokens(c5.pad_token_id)
+    if tok5.eos_token is None:
+        tok5.eos_token = tok5.convert_ids_to_tokens(c5.eos_token_id)
+    print("AraT5v2 tokenizer:", type(tok5).__name__, "| pad/eos:", tok5.pad_token, tok5.eos_token,
+          "| sample ids end:", tok5("مرحبا بالعالم")["input_ids"][-3:])
+    hp5 = {**TR, **FT["arat5v2"], "max_target_tokens": FT["max_target_tokens"]}
+    t5_rows = tokenize(grid_df, tok5)
+    t5_eval = tokenize(ev, tok5)
+    R5 = S2S.train_run(cfg, S2S.run_name("arat5v2", hp5["learning_rate"], TR["grid_train_fraction"]), T5, tok5,
+                       t5_rows, t5_eval, list(ev.summary), list(ev.text), hp5, extra_meta={"stage": "arat5_comparison"})
+    same_lr = next((g for g in grid if abs(g["lr"] - hp5["learning_rate"]) < 1e-12), None)
+    cmp = [{"model": "arat5v2", "lr": hp5["learning_rate"], **R5["best"]}]
+    if same_lr:
+        cmp.append({"model": "arabart", **same_lr})
+    display(pd.DataFrame(cmp)[["model", "lr", "rouge1", "rouge2", "rougeL", "number_precision", "novel_rate", "gen_words"]].round(4))
+    write_json(C.path(cfg, "models", "runs", "arat5_comparison.json"), cmp)
+'''), code('''
+# ==== 10. Decoding tuning on validation (beams 1-4 x length penalty 1/1.5/2) ===========
+from arabic_summ.backends.hf import HFBackend
+dec_path = C.path(cfg, "models", "runs", FINAL_NAME, "decoding_grid.json")
+if dec_path.exists():
+    DEC_ROWS, BEST_DEC = read_json(dec_path)["rows"], read_json(dec_path)["selected"]
+else:
+    backend = HFBackend(FINAL["best_dir"], dtype="float16", batch_size=16, max_input_tokens=FT["max_source_tokens"])
+    with L.GPUSession(cfg, f"{FINAL_NAME}_decoding", "03_finetune", stage="decoding"):
+        DEC_ROWS, BEST_DEC = DEC.tune(backend, [normalize(t, POLICY) for t in tune_df.text], list(tune_df.summary),
+                                      FT["decoding_grid"], FT["max_target_tokens"], FT["select"])
+    write_json(dec_path, {"rows": DEC_ROWS, "selected": BEST_DEC, "n_texts": len(tune_df)})
+    del backend; torch.cuda.empty_cache()
+display(pd.DataFrame(DEC_ROWS)[["num_beams", "length_penalty", "rouge1", "rouge2", "rougeL", "number_precision",
+                                 "novel_rate", "gen_words", "seconds_per_text"]].round(4))
+print("selected decoding:", BEST_DEC)
+'''), code('''
+# ==== 11. Export model + provenance ====================================================
+from arabic_summ.train.provenance import export_model
+man = read_json(prepare.manifest_path(cfg))
+best_dec_row = next(r for r in DEC_ROWS if all(r[k] == v for k, v in BEST_DEC.items()))
+PROV = export_model(cfg, FINAL["best_dir"], FT["export_name"], BEST_DEC, {
+    "base_model": AB, "training_run": FINAL, "lr_grid": {"rows": grid, "selected_lr": BEST_LR},
+    "train_filter": FILTER_REPORT, "decoding_validation": best_dec_row,
+    "data": {"dataset": man.get("dataset"), "processed_files": man.get("processed_files"),
+             "train_filter": man.get("train_filter")},
+    "eval_protocol": {"validation_eval_samples": len(ev), "decoding_tune_samples": len(tune_df), "seed": SEED,
+                      "rouge": "arabic_summ.eval.rouge (matching-normalized whitespace tokens, no stemming)"},
+    "gpu_ledger": L.summary(cfg),
+})
+prepare.update_manifest(cfg, "finetune", {k: PROV[k] for k in ("model_name", "exported_utc", "size_mb", "config_hash")}
+                        | {"selected_lr": BEST_LR, "decoding": BEST_DEC, "validation_best": FINAL["best"]})
+print(PROV["model_name"], PROV["size_mb"], "MB |", {k: v["sha256"][:12] for k, v in PROV["files"].items()})
+'''), code('''
+# ==== 12. Sanity check on 6 benchmark texts: fine-tuned vs public baseline =============
+from arabic_summ.summarize.pipeline import Summarizer
+sel = items[items.status == "selected"].reset_index()
+demo6 = sel.groupby("domain", group_keys=False).apply(lambda g: g.sample(3, random_state=SEED))
+out = []
+for key in ("arabart_ft", "arabart_xlsum_omar"):
+    be = M.load_hf_backend(cfg, key, dtype="float16")
+    sm = Summarizer(cfg, backend=be, decoding=M.decoding_for(cfg, key), tokens_per_word=M.tokens_per_word(cfg, "arabart"))
+    for _, r in demo6.iterrows():
+        for st in ("hybrid", "segmentwise", "direct"):
+            res = sm.summarize(r.text, strategy=st)
+            fr = F.check(res.summary, r.text)
+            out.append({"model": key, "strategy": st, "sample_id": r.sample_id, "length_ok": res.length_ok,
+                        "numbers_ok": fr.numbers_ok, "novel_rate": fr.novel_rate, "seconds": res.seconds["total"],
+                        "summary": res.summary})
+    del be; torch.cuda.empty_cache()
+san = pd.DataFrame(out)
+san.to_json(C.path(cfg, "logs") / "03_sanity.jsonl", orient="records", lines=True, force_ascii=False)
+display(san.groupby(["model", "strategy"])[["length_ok", "numbers_ok", "novel_rate", "seconds"]].mean().round(3))
+x = san[(san.model == "arabart_ft") & (san.strategy == "hybrid")].iloc[0]
+print(x.sample_id, "\\n", x.summary)
+'''), code('''
+# ==== 13. Summary (paste this output back) =============================================
+print("filter :", {k: FILTER_REPORT[k] for k in ("rows_in", "rows_kept", "kept_share", "max_novel_rate_used", "relaxed_to_min_keep")})
+print("grid   :", [(g["lr"], g["epochs"], round(g["rouge1"], 4), round(g["number_precision"], 4)) for g in grid], "-> lr", BEST_LR)
+print("final  :", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in FINAL["best"].items() if k in ("epoch", "rouge1", "rouge2", "rougeL", "number_precision", "novel_rate", "gen_words")})
+print("decode :", BEST_DEC, "| rouge1", round(best_dec_row["rouge1"], 4))
+print("export :", PROV["model_name"], PROV["size_mb"], "MB, commit", PROV["code"]["git_commit"])
+print("ledger :", L.summary(cfg))
+''')]
+    return notebook(cells, gpu=True)
+
+
+NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03}
 
 
 def main() -> None:

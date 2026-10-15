@@ -66,14 +66,37 @@ def save_calibration(cfg: Mapping, key: str, record: dict) -> dict:
 def tokens_per_word(cfg: Mapping, key: str) -> float | None:
     p = calibration_path(cfg)
     if p.exists():
-        rec = read_json(p).get(key)
+        rec = read_json(p).get(calibration_key(cfg, key) if key in all_model_keys(cfg) else key)
         if rec:
             return float(rec["summary"]["tokens_per_word"])
     return None
+
+
+def local_path(cfg: Mapping, key: str) -> Path | None:
+    """Resolved local directory of a model entry (relative paths live under paths.root)."""
+    lp = model_entry(cfg, key).get("local_path")
+    if not lp:
+        return None
+    p = Path(lp)
+    return p if p.is_absolute() else C.root(cfg) / p
+
+
+def decoding_for(cfg: Mapping, key: str) -> dict:
+    """Tuned decoding.json shipped with a local model, else the config defaults."""
+    lp = local_path(cfg, key)
+    if lp and (lp / "decoding.json").exists():
+        return {**cfg.get("decoding", {}), **read_json(lp / "decoding.json")}
+    return dict(cfg.get("decoding", {}))
+
+
+def calibration_key(cfg: Mapping, key: str) -> str:
+    """Fine-tuned models share their base model's tokenizer calibration."""
+    return model_entry(cfg, key).get("base", key)
 
 
 def load_hf_backend(cfg: Mapping, key: str, **kw):
     from .backends.hf import HFBackend
 
     e = model_entry(cfg, key)
-    return HFBackend(e.get("local_path") or e["repo_id"], revision=None if e.get("local_path") else e.get("revision"), **kw)
+    lp = local_path(cfg, key)
+    return HFBackend(str(lp) if lp else e["repo_id"], revision=None if lp else e.get("revision"), **kw)

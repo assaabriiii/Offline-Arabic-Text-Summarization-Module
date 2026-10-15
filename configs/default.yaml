@@ -14,6 +14,7 @@ paths:
   benchmark: data/benchmark
   logs: logs
   markers: state            # step-completion markers (resumability)
+  models: models            # fine-tuning runs and exported models (03)
   scratch: /content/scratch/arabic_summ   # fast local disk for re-creatable temp files
 
 # ---------------------------------------------------------------- data (01)
@@ -133,8 +134,54 @@ decoding:
   no_repeat_ngram_size: 3
   early_stopping: true
 
+# ------------------------------------------------------- fine-tuning (03)
+finetune:
+  max_source_tokens: 1024     # AraBART position limit; longer articles are truncated in training
+  max_target_tokens: 128      # XL-Sum highlights: median ~24 words (~30 tokens)
+  # Faithfulness filter for XL-Sum *train* pairs (eval.facts; 02 finding). Validation/test untouched.
+  filter:
+    require_numbers_supported: true   # every number in the highlight must occur in the article
+    max_novel_rate: 0.35              # share of highlight content stems absent from the article
+    min_keep_fraction: 0.5            # if fewer survive, the novel-rate threshold is relaxed (reported)
+  train:                      # proposal §stage 4: seed 42, LR {1e-5,3e-5,5e-5}, <=5 epochs, eff. batch 16, patience 2
+    seed: 42
+    learning_rates: [1.0e-5, 3.0e-5, 5.0e-5]
+    max_epochs: 5
+    effective_batch_size: 16
+    per_device_batch_size: 4   # x4 accumulation = 16; 1024-token batches fit a T4 in fp16
+    eval_batch_size: 32
+    patience: 2
+    warmup: 0.05              # fraction of total steps
+    weight_decay: 0.01
+    label_smoothing: 0.0
+    fp16: true
+    eval_samples: 500         # fixed XL-Sum validation subset for per-epoch model selection
+    eval_num_beams: 1         # greedy during training-time evaluation (cheap); beams tuned later
+    grid_train_fraction: 0.25 # LR screening on a seeded 25 % of filtered train (T4 budget), final run on 100 %
+    final_train_fraction: 1.0
+    keep_checkpoints: false
+  arat5v2:                    # single comparison run (decision 3)
+    learning_rate: 5.0e-5
+    fp16: false               # T5 overflows in fp16; T4 has no bf16
+    per_device_batch_size: 4
+  select:
+    primary: rouge1
+    faith_key: number_precision
+    faith_tolerance: 0.02
+  decoding_grid:              # tuned on a validation subset disjoint from eval_samples
+    num_beams: [1, 2, 3, 4]
+    length_penalty: [1.0, 1.5, 2.0]
+    no_repeat_ngram_size: 3
+    samples: 300
+  export_name: arabart_ft
+
 # ------------------------------------------------------- models
 models:
+  arabart_ft:                 # produced by 03_finetune (relative local_path -> under paths.root)
+    local_path: models/arabart_ft
+    base: arabart
+    license: "Apache-2.0 base; fine-tuned on XL-Sum (CC BY-NC-SA 4.0)"
+    role: fine-tuned
   arabart:
     repo_id: moussaKam/AraBART
     revision: cb67d617b84f52755c0cbf34684a41fe0f01cdb1

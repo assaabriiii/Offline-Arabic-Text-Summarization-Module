@@ -9,7 +9,7 @@ personal contact details.
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **built, awaiting Colab run** |
-| 3 | `03_finetune.ipynb` | — |
+| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **built, awaiting Colab T4 run** |
 | 4 | `04_optimize.ipynb` | — |
 | 5 | `05_evaluate.ipynb` | — |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
@@ -92,6 +92,15 @@ personal contact details.
     different, fluent Arabic human reviewer before `--strict` passes. Reports must say
     "model-drafted, human-verified". The drafts JSON is never committed. See guideline §1a.
 
+17. **03 fine-tuning design**: XL-Sum train pairs are filtered with `eval.facts` (every highlight number must
+    occur in the article; novel-content rate ≤ 0.35, relaxed to keep ≥ 50 % if needed, reported). The LR grid
+    {1e-5, 3e-5, 5e-5} runs on a seeded 25 % of filtered train to fit the T4 budget; the selected LR is then
+    trained on 100 %. Models are selected by validation ROUGE-1 among candidates within 0.02 of the best number
+    precision. ROUGE is our own Arabic implementation (matching-normalized tokens, no stemming), so it is not
+    directly comparable to model-card numbers. AraT5v2: one fp32 run at 5e-5 (top of the proposal grid) on the
+    same 25 % subset. Decoding (beams 1–4 × LP 1/1.5/2, no-repeat 3) is tuned on 300 validation articles
+    disjoint from the 500 used for epoch selection and saved as `models/arabart_ft/decoding.json`.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -142,4 +151,5 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 ## Next
 - Upload `reference_drafts.json` to `DRIVE_ROOT/data/benchmark/`, run 01_data cells 8b + 9.
 - Team (parallel): human review of all 240 drafts per guideline §1a/§6, then `benchmark-validate --strict`.
-- Now: `03_finetune.ipynb`.
+- Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
+- Then: `04_optimize.ipynb`.
