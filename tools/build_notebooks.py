@@ -159,8 +159,8 @@ print({k: m[k] for k in ("written", "kept_existing", "news_candidates", "news_by
   Unsampled items are kept as `rejected` + note `reserve`; promote one to `selected` to replace a bad pick.
 
 **Reference summaries** (cell 8b): at the user's request the 240 references were **drafted by a model**
-(`reference_source=llm_draft`, writer `claude-opus-5.5`). Upload the drafts file (never committed) to
-`DRIVE_ROOT/data/benchmark/reference_drafts.json`; cell 8b fills only empty rows and leaves
+(`reference_source=llm_draft`, writer `claude-opus-5.5`). Cell 8b reads `DRIVE_ROOT/data/benchmark/reference_drafts.json`
+if present, else the committed copy `benchmark_sources/reference_drafts.json`; it fills only empty rows and leaves
 `review_status=pending`. A fluent Arabic reviewer must then check every row in Google Sheets against
 `docs/reference_guideline.md` §6, set `reviewer_id` and `review_status=approved` (or `needs_revision`).
 Results built on these references are reported as **model-drafted, human-verified**.
@@ -182,12 +182,15 @@ import json
 print(json.dumps(prepare.run_auto_select(cfg), ensure_ascii=False, indent=1))
 '''), code('''
 # ==== 8b. Model-drafted references -> references.csv (empty rows only, status pending) ===
+from pathlib import Path
 drafts = C.path(cfg, "benchmark") / "reference_drafts.json"
+if not drafts.exists():
+    drafts = Path(REPO_DIR) / "benchmark_sources" / "reference_drafts.json"   # committed copy
 if drafts.exists():
     print(json.dumps(prepare.import_reference_drafts(cfg, drafts, writer_id="claude-opus-5.5"),
                      ensure_ascii=False, indent=1))
 else:
-    print("no reference_drafts.json on Drive yet: skipping")
+    print("no reference_drafts.json found: skipping")
 '''), code('''
 # ==== 9. Validate benchmark + leakage check (STRICT=True only when freezing the set) ====
 STRICT = False

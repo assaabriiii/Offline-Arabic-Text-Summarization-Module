@@ -22,7 +22,9 @@ model (`reference_source = llm_draft`, `writer_id = claude-opus-5.5`) following 
 - Reports, the final benchmark description and any ROUGE claim must call these references
   **model-drafted, human-verified** and give the counts per `reference_source` (the validator
   prints `references_by_source` / `approved_by_source`).
-- The drafts file is kept out of git (it contains the reference answers of the test set).
+- The drafts are published in the repo (`benchmark_sources/reference_drafts.json`, owner's decision
+  2026-10-16). Because the repo is public, these benchmark answers may end up in other models' training
+  data. Results on this benchmark should state that the references are public.
 
 ## 2. Length
 - Aim for `ref_target_words`, which is about 20% of the input's word count. The guideline range

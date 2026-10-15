@@ -40,8 +40,8 @@ filter), train for longer or at a different LR, or use a larger GPU (L4/A100 wit
    * the owner shares that folder with you and you add a shortcut to it in your own "My Drive" at the
      same path (`MyDrive/arabic_summ`), **or**
    * you rebuild everything in your own Drive by running `01_data` (about 10 minutes, CPU).
-     `reference_drafts.json` is **not** in git (it holds the test-set answers); ask the owner for it and
-     place it in `MyDrive/arabic_summ/data/benchmark/` before `01_data` cell 8b.
+     The reference drafts are in git at `benchmark_sources/reference_drafts.json` (added 2026-10-16 at the
+     owner's request); `01_data` cell 8b uses that copy when Drive has none.
 
    Only one person should run a given notebook at a time on a shared Drive. Two concurrent runs
    would write the same checkpoints.

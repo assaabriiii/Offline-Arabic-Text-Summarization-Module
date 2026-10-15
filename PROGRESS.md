@@ -90,7 +90,9 @@ personal contact details.
     sit slightly outside the 15–25 % guideline band (all inside the hard 10–30 % limits); reviewers may
     lengthen the shortest (NEWS-0102/0105/0122/0125, ORG-0177 at 13–14 %). Every row needs a
     different, fluent Arabic human reviewer before `--strict` passes. Reports must say
-    "model-drafted, human-verified". The drafts JSON is never committed. See guideline §1a.
+    "model-drafted, human-verified". See guideline §1a. *Update 2026-10-16*: at the owner's request the
+    drafts are committed (`benchmark_sources/reference_drafts.json`, public repo), so the benchmark
+    answers are public; reports must say so.
 
 17. **03 fine-tuning design**: XL-Sum train pairs are filtered with `eval.facts` (every highlight number must
     occur in the article; novel-content rate ≤ 0.35, relaxed to keep ≥ 50 % if needed, reported). The LR grid
