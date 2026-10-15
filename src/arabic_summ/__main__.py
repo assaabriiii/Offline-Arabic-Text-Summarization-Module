@@ -37,7 +37,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--writer-id", required=True)
     p.add_argument("--reference-source", default="llm_draft", choices=["human", "source", "llm_draft"])
 
+    p = sub.add_parser("onnx-export", help="export a fine-tuned model to ONNX FP32 and dynamic INT8 (ONNX env)")
+    p.add_argument("model_dir", type=Path)
+    p.add_argument("out_root", type=Path, help="writes <out_root>/fp32 and <out_root>/int8")
+    p.add_argument("--arch", default="avx2", help="optimum AutoQuantizationConfig preset (avx2, avx512_vnni, arm64)")
+
+    p = sub.add_parser("optimize-measure", help="measure one CPU variant from a spec JSON (fresh process)")
+    p.add_argument("spec", type=Path)
+    p.add_argument("out", type=Path)
+
     args = ap.parse_args(argv)
+    if args.cmd == "onnx-export":
+        from .optimize import onnx_export as X
+
+        print("fp32:", X.export_fp32(args.model_dir, args.out_root / "fp32"))
+        print("int8:", X.quantize_int8(args.out_root / "fp32", args.out_root / "int8", args.arch))
+        return 0
+    if args.cmd == "optimize-measure":
+        from .optimize import measure
+
+        return measure.main(str(args.spec), str(args.out))
     cfg = _cfg(args)
 
     if args.cmd == "data-prepare":

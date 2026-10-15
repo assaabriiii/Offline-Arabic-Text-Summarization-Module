@@ -10,27 +10,47 @@ GEN_KEYS = ("num_beams", "length_penalty", "no_repeat_ngram_size", "early_stoppi
             "repetition_penalty", "do_sample")
 
 
+QUANTIZE_MODES = (None, "dynamic_int8")
+
+
+def quantize_dynamic_int8(model):
+    """PyTorch dynamic INT8 for every nn.Linear (weights int8, activations quantized on the fly).
+    CPU only. Uses fbgemm on x86 and qnnpack on ARM."""
+    import torch
+    from torch.ao.quantization import quantize_dynamic
+
+    engines = torch.backends.quantized.supported_engines
+    torch.backends.quantized.engine = "fbgemm" if "fbgemm" in engines else "qnnpack"
+    return quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+
+
 class HFBackend:
     def __init__(self, model_path: str, revision: str | None = None, device: str | None = None,
                  dtype: str = "float32", max_input_tokens: int = 1024, batch_size: int = 4,
-                 local_files_only: bool = False, num_threads: int | None = None):
+                 local_files_only: bool = False, num_threads: int | None = None, quantize: str | None = None):
         import torch
         from transformers import AutoModelForSeq2SeqLM
 
         from ..models import load_tokenizer
 
+        if quantize not in QUANTIZE_MODES:
+            raise ValueError(f"quantize must be one of {QUANTIZE_MODES}")
         if num_threads:
             torch.set_num_threads(num_threads)
         self.torch = torch
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = "cpu" if quantize else (device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.tokenizer = load_tokenizer(model_path, revision=revision, local_files_only=local_files_only)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(
+        model = AutoModelForSeq2SeqLM.from_pretrained(
             model_path, revision=revision, local_files_only=local_files_only,
             dtype=getattr(torch, dtype),
-        ).to(self.device).eval()
-        self.name = f"hf:{model_path}"
+        ).eval()
+        self.model = quantize_dynamic_int8(model) if quantize else model.to(self.device)
+        self.name = f"hf:{model_path}" + (f":{quantize}" if quantize else "")
+        self._set_limits(self.model.config, max_input_tokens, batch_size)
+
+    def _set_limits(self, config, max_input_tokens: int, batch_size: int) -> None:
         # learned absolute positions (BART) cap both input and output length; T5 has none
-        self.max_positions = getattr(self.model.config, "max_position_embeddings", None)
+        self.max_positions = getattr(config, "max_position_embeddings", None)
         self.max_input_tokens = min(max_input_tokens, self.max_positions or max_input_tokens)
         self.batch_size = batch_size
 

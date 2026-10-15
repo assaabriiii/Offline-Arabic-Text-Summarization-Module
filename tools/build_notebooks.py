@@ -522,7 +522,141 @@ print("ledger :", L.summary(cfg))
     return notebook(cells, gpu=True)
 
 
-NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03}
+def nb04() -> dict:
+    cells = [md('''
+# 04 · CPU optimization: PyTorch vs ONNX Runtime, FP32 vs INT8
+
+**What this does** (proposal stage 5 and the stage-1/2 model-selection rule)
+1. Takes the fine-tuned model from 03 (`models/arabart_ft`). If it doesn't exist yet, runs a **dry run** on the
+   public baseline so the whole notebook can be tested before 03 finishes.
+2. Creates a separate **ONNX environment** (`requirements/colab-onnx.txt`; optimum-onnx needs transformers 4.x)
+   and exports ONNX **FP32** and dynamic **INT8** (AVX2 kernels) to Drive.
+3. Measures each variant **in a fresh process** (batch size 1, model preloaded): load + warm-up time, peak process
+   memory, weight size, ROUGE and fact check on 200 XL-Sum validation articles (direct generation, tuned decoding),
+   and full-pipeline latency on 24 benchmark texts (4 per domain × length bin) with length compliance + fact check.
+4. Applies the proposal's rule. **Gates:** weights ≤ 1 GB, process memory ≤ 8 GB, median latency ≤ 15 s,
+   ROUGE-1 drop ≤ 0.02 vs PyTorch FP32. **Score:** 50 % quality & factual accuracy + 30 % CPU time + 10 % memory + 10 % size.
+5. Exports the selected variant to `models/arabart_ft_cpu/` with `runtime.json` for the MVP and `bench/`.
+
+**Runtime: Colab CPU** (no GPU needed). Colab gives 2 vCPUs, so latencies here are only for comparing variants;
+the acceptance timing runs later with `bench/` on the 8-core reference machine. Resumable: finished
+exports and measurements are kept on Drive.
+'''), *setup_cells("04_optimize", "requirements/colab-data.txt"), code('''
+# ==== 3. Model to optimize (fine-tuned, or dry run on the public baseline) ==============
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+import pandas as pd
+from arabic_summ import config as C, models as M
+from arabic_summ.data import prepare, benchmark as B
+from arabic_summ.io_utils import read_json, write_json
+from arabic_summ.optimize import select as SEL
+from arabic_summ.optimize.variants import VARIANTS, model_dir_for
+OPT, SEED = cfg["optimize"], cfg["project"]["seed"]
+FT_DIR = M.local_path(cfg, "arabart_ft")
+DRY_RUN = not (FT_DIR / "model.safetensors").exists()
+LOCAL = Path("/content/opt"); LOCAL.mkdir(parents=True, exist_ok=True)
+if DRY_RUN:
+    from huggingface_hub import snapshot_download
+    b = M.model_entry(cfg, "arabart_xlsum_omar")
+    SRC_DIR = Path(snapshot_download(b["repo_id"], revision=b["revision"], local_dir=str(LOCAL / "baseline_src")))
+    TAG, DECODING = "dryrun_baseline", dict(cfg["decoding"])
+    print("DRY RUN: fine-tuned model not found, using", b["repo_id"])
+else:
+    SRC_DIR, TAG, DECODING = FT_DIR, OPT["export_name"], M.decoding_for(cfg, "arabart_ft")
+TORCH_DIR = LOCAL / "torch"
+if not (TORCH_DIR / "config.json").exists():
+    shutil.copytree(SRC_DIR, TORCH_DIR, dirs_exist_ok=True)
+ONNX_ROOT = C.path(cfg, "models", f"{TAG}_onnx", "x").parent
+OUT_DIR = C.path(cfg, "logs", f"04_optimize_{TAG}", "x").parent
+print("source:", SRC_DIR, "| decoding:", DECODING, "| ONNX ->", ONNX_ROOT)
+'''), code('''
+# ==== 4. Separate ONNX environment (transformers 4.x + optimum-onnx) ====================
+ORT_PY = "/content/ort_env/bin/python"
+ENV = {**os.environ, "PYTHONPATH": f"{REPO_DIR}/src"}
+if not os.path.exists(ORT_PY):
+    sh("python -m venv --system-site-packages /content/ort_env")
+    sh(f"{ORT_PY} -m pip install -q -r {REPO_DIR}/requirements/colab-onnx.txt")
+chk = subprocess.run([ORT_PY, "-c", "import transformers, onnxruntime, optimum.onnxruntime as o; "
+                      "print('transformers', transformers.__version__, '| onnxruntime', onnxruntime.__version__)"],
+                     capture_output=True, text=True)
+print(chk.stdout, chk.stderr[-1500:])
+'''), code('''
+# ==== 5. Export ONNX FP32 + dynamic INT8 (skipped if already on Drive) ==================
+if not (ONNX_ROOT / "int8" / "encoder_model.onnx").exists():
+    r = subprocess.run([ORT_PY, "-m", "arabic_summ", "onnx-export", str(TORCH_DIR), str(ONNX_ROOT),
+                        "--arch", OPT["onnx_quant_arch"]], capture_output=True, text=True, env=ENV, cwd=REPO_DIR)
+    print(r.stdout[-2000:]); assert r.returncode == 0, r.stderr[-4000:]
+for sub in ("fp32", "int8"):
+    print(sub, {p.name: round(p.stat().st_size / 2**20, 1) for p in sorted((ONNX_ROOT / sub).glob("*.onnx*"))})
+'''), code('''
+# ==== 6. Measurement inputs (validation articles + stratified benchmark texts) ==========
+val = prepare.load_processed(cfg, "validation").sample(OPT["val_samples"], random_state=SEED + 1)
+items = B.read_csv(C.path(cfg, "benchmark") / B.ITEMS_FILE)
+items = items[items.status == "selected"]
+bench = (items.groupby(["domain", "length_bin"], group_keys=False)
+              .apply(lambda g: g.sample(min(len(g), OPT["bench_per_cell"]), random_state=SEED)))
+base_spec = {"config_paths": [f"{REPO_DIR}/{c}" for c in CONFIGS], "root": cfg["paths"]["root"],
+             "threads": os.cpu_count(), "decoding": DECODING, "max_new_tokens": cfg["finetune"]["max_target_tokens"],
+             "val": val[["text", "summary"]].to_dict("records"),
+             "bench": bench[["sample_id", "domain", "text"]].to_dict("records"),
+             "ratio": cfg["pipeline"]["default_ratio"], "strategy": cfg["pipeline"]["strategy"],
+             "tokens_per_word": M.tokens_per_word(cfg, "arabart")}
+print(f"validation {len(val)} | benchmark {len(bench)} ({bench.groupby(['domain','length_bin']).size().to_dict()})"
+      f" | threads {os.cpu_count()} | strategy {base_spec['strategy']}")
+'''), code('''
+# ==== 7. Measure every variant in a fresh process (resumable; ~10-40 min each on Colab CPU) =
+results = {}
+for v in OPT["variants"]:
+    out = OUT_DIR / f"{v}.json"
+    if not out.exists():
+        spec = {**base_spec, "variant": v, "model_dir": str(model_dir_for(v, TORCH_DIR, ONNX_ROOT))}
+        sp = OUT_DIR / f"spec_{v}.json"; write_json(sp, spec)
+        py = ORT_PY if VARIANTS[v]["runtime"] == "onnx" else sys.executable
+        r = subprocess.run([py, "-m", "arabic_summ", "optimize-measure", str(sp), str(out)],
+                           capture_output=True, text=True, env=ENV, cwd=REPO_DIR)
+        print(v, r.stdout[-600:])
+        if r.returncode:
+            print(r.stderr[-3000:]); continue
+    results[v] = read_json(out)
+cols = ["variant", "weights_mb", "peak_rss_mb", "load_seconds", "warmup_seconds", "latency_median_s", "latency_p90_s",
+        "rouge1", "rouge2", "rougeL", "val_number_precision", "val_novel_rate", "bench_length_ok", "bench_numbers_ok"]
+display(pd.DataFrame(list(results.values()))[cols])
+'''), code('''
+# ==== 8. Proposal selection rule + export of the selected variant =======================
+ranked = SEL.composite(list(results.values()), OPT["gates"], OPT["weights"])
+display(pd.DataFrame([{k: r.get(k) for k in ("variant", "score", "score_parts", "gate_failures")} for r in ranked]))
+best = ranked[0]
+assert best["score"] is not None, "no variant passed the gates: see gate_failures"
+write_json(OUT_DIR / "selection.json", {"ranked": [{k: v for k, v in r.items() if k != "per_sample"} for r in ranked],
+                                        "selected": best["variant"], "gates": OPT["gates"], "weights": OPT["weights"],
+                                        "dry_run": DRY_RUN})
+if not DRY_RUN:
+    dest = C.path(cfg, "models", OPT["export_name"], "x").parent
+    if dest.exists(): shutil.rmtree(dest)
+    shutil.copytree(best["model_dir"], dest)
+    write_json(dest / "decoding.json", DECODING)
+    write_json(dest / "runtime.json", {"variant": best["variant"], **VARIANTS[best["variant"]],
+                                       "requirements": "requirements/colab-onnx.txt" if VARIANTS[best["variant"]]["runtime"] == "onnx" else "torch",
+                                       "measured": {k: best[k] for k in cols if k in best}, "source_model": str(SRC_DIR)})
+    prepare.update_manifest(cfg, "optimize", {"selected": best["variant"], "export": str(dest),
+                            "metrics": {k: best[k] for k in cols if k in best}, "score": best["score"]})
+    print("exported", best["variant"], "->", dest)
+else:
+    print("dry run: selection recorded, nothing exported")
+'''), code('''
+# ==== 9. Summary (paste this output back) ==============================================
+ref = results.get("torch_fp32", {})
+for r in ranked:
+    drop = round(ref.get("rouge1", 0) - r["rouge1"], 4) if ref else None
+    print(f"{r['variant']:11s} score={r['score']} size={r['weights_mb']}MB rss={r['peak_rss_mb']}MB "
+          f"median={r['latency_median_s']}s p90={r['latency_p90_s']}s R1={r['rouge1']:.4f} (drop {drop}) "
+          f"numP={r['val_number_precision']:.3f} gates={r['gate_failures'] or 'ok'}")
+print("machine:", next(iter(results.values()))["machine"], "| dry run:", DRY_RUN)
+''')]
+    return notebook(cells)
+
+
+NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03, "04_optimize.ipynb": nb04}
 
 
 def main() -> None:

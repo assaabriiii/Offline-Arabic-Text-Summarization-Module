@@ -175,6 +175,20 @@ finetune:
     samples: 300
   export_name: arabart_ft
 
+# ------------------------------------------------------- CPU optimization (04)
+optimize:
+  variants: [torch_fp32, torch_int8, onnx_fp32, onnx_int8]
+  onnx_quant_arch: avx2        # target is an x86-64 8-core CPU; avx2 kernels run on any modern x86
+  val_samples: 200             # XL-Sum validation articles for the FP32 vs INT8 ROUGE comparison
+  bench_per_cell: 4            # benchmark texts per domain x length bin (24) for pipeline latency
+  gates:                       # proposal: stage-1 requirements
+    max_model_mb: 1024
+    max_rss_mb: 8192
+    max_median_seconds: 15
+    max_rouge1_drop: 0.02      # vs torch_fp32
+  weights: {quality: 0.5, time: 0.3, memory: 0.1, size: 0.1}   # proposal composite score
+  export_name: arabart_ft_cpu
+
 # ------------------------------------------------------- models
 models:
   arabart_ft:                 # produced by 03_finetune (relative local_path -> under paths.root)

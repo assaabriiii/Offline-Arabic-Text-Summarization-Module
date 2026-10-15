@@ -10,7 +10,7 @@ personal contact details.
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **built, awaiting Colab run** |
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **built, awaiting Colab T4 run** |
-| 4 | `04_optimize.ipynb` | — |
+| 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb` | — |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | — |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
@@ -101,6 +101,17 @@ personal contact details.
     same 25 % subset. Decoding (beams 1–4 × LP 1/1.5/2, no-repeat 3) is tuned on 300 validation articles
     disjoint from the 500 used for epoch selection and saved as `models/arabart_ft/decoding.json`.
 
+18. **04 optimization**: four variants (PyTorch FP32 reference, PyTorch dynamic INT8, ONNX Runtime FP32,
+    ONNX Runtime dynamic INT8 with AVX2 kernels). optimum-onnx 0.1.0 needs transformers 4.57.6 and fails on
+    Python 3.14, so ONNX export/inference use a separate `--system-site-packages` venv
+    (`requirements/colab-onnx.txt`) driven by subprocess; tokenizers saved by transformers 5 load there via the
+    `PreTrainedTokenizerFast` fallback. Each variant is measured in a fresh process (batch 1, preloaded model,
+    peak RSS, warm-up, per-sample input length, CPU model/threads/OS/runtime versions). Selection follows the
+    proposal: gates (weights ≤ 1 GB, RSS ≤ 8 GB, median ≤ 15 s, ROUGE-1 drop ≤ 0.02 vs FP32), then 50/30/10/10.
+    PyTorch INT8 quantizes at load time, so its on-disk size is the FP32 file. Colab CPU (2 vCPU) latencies are
+    only comparative; acceptance timing is done by `bench/` on the 8-core machine. Verified locally on a tiny
+    BART: all four variants produce identical outputs.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -152,4 +163,5 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Upload `reference_drafts.json` to `DRIVE_ROOT/data/benchmark/`, run 01_data cells 8b + 9.
 - Team (parallel): human review of all 240 drafts per guideline §1a/§6, then `benchmark-validate --strict`.
 - Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
-- Then: `04_optimize.ipynb`.
+- Then `04_optimize.ipynb` on a CPU runtime (can be dry-run on the public baseline now).
+- Next to build: `05_evaluate`, MVP (CLI + Gradio), `bench/`.

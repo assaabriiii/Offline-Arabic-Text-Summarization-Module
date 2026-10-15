@@ -37,7 +37,8 @@ def load_tokenizer(path_or_repo: str, revision: str | None = None, **kw):
 
     try:
         return AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw)
-    except TypeError:
+    except (TypeError, ValueError):
+        # also: a tokenizer saved by transformers 5 declares `TokenizersBackend`, unknown to 4.x (ONNX env)
         return PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
 
 
