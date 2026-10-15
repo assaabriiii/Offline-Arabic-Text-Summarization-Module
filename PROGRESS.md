@@ -8,8 +8,8 @@ personal contact details.
 |---|---|---|
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
-| 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **built, awaiting Colab run** |
-| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **built, awaiting Colab T4 run** |
+| 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
+| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 grid started, interrupted by Colab disconnects |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |

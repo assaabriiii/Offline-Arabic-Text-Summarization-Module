@@ -3,7 +3,7 @@
 Phase 1 MVP: an offline abstractive summarizer for Modern Standard Arabic news and
 organizational reports (300–1000 words → a 10–30% summary, 30–300 words) that runs on a CPU.
 Persian summary: [`docs/README.fa.md`](docs/README.fa.md). Design: [`docs/architecture.md`](docs/architecture.md).
-Status and every decision: [`PROGRESS.md`](PROGRESS.md).
+Status and every decision: [`PROGRESS.md`](PROGRESS.md). **New contributors: start with [`docs/HANDOFF.md`](docs/HANDOFF.md).**
 
 ## Repository layout
 
