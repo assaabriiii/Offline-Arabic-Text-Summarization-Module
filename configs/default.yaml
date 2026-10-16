@@ -164,7 +164,9 @@ finetune:
   arat5v2:                    # single comparison run (decision 3)
     learning_rate: 5.0e-5
     fp16: false               # T5 overflows in fp16; T4 has no bf16
-    per_device_batch_size: 4
+    per_device_batch_size: 2  # x8 accumulation = 16; batch 4 in fp32 ran out of the T4's 15 GB (2026-10-17)
+    eval_batch_size: 8
+    gradient_checkpointing: true
   select:
     primary: rouge1
     faith_key: number_precision

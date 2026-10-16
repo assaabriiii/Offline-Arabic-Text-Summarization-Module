@@ -114,6 +114,7 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
         load_best_model_at_end=True, metric_for_best_model="rouge1", greater_is_better=True,
         save_total_limit=2, seed=int(hp["seed"]), data_seed=int(hp["seed"]), report_to="none",
         group_by_length=True, dataloader_num_workers=int(hp.get("dataloader_workers", 2)),
+        gradient_checkpointing=bool(hp.get("gradient_checkpointing", False)),
     )
     collator = DataCollatorForSeq2Seq(tokenizer, model=model, pad_to_multiple_of=8 if fp16 else None)
     session = GPUSession(cfg, name, notebook, run=name, learning_rate=float(hp["learning_rate"]),
