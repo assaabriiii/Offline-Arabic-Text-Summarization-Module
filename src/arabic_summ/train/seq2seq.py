@@ -45,12 +45,21 @@ def training_args(**kw):
     return args, dropped
 
 
-def make_compute_metrics(tokenizer, refs: Sequence[str], sources: Sequence[str]):
+def make_compute_metrics(tokenizer, refs: Sequence[str], sources: Sequence[str],
+                         ref_label_ids: Sequence[Sequence[int]] | None = None):
+    """`refs` / `sources` are matched to predictions by position. `ref_label_ids` (the eval rows' labels)
+    lets each call verify that the predictions really come back in eval-set order."""
     import numpy as np
 
     idx = [facts.SourceIndex(s) for s in sources]
 
     def compute(pred):
+        if ref_label_ids is not None and pred.label_ids is not None:
+            pad = {-100, tokenizer.pad_token_id}          # batches are padded with -100, the pad id, or both
+            got = [[int(t) for t in row if t not in pad] for row in pred.label_ids]
+            if any(g != list(r) for g, r in zip(got, ref_label_ids)):
+                raise RuntimeError("eval predictions are not in eval-set order: metrics would pair each "
+                                   "summary with another article's reference")
         ids = pred.predictions[0] if isinstance(pred.predictions, tuple) else pred.predictions
         ids = np.where(ids < 0, tokenizer.pad_token_id, ids)
         hyps = [h.strip() for h in tokenizer.batch_decode(ids, skip_special_tokens=True)]
@@ -72,9 +81,20 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
         return read_json(out / "result.json")
 
     import torch
+    from torch.utils.data import SequentialSampler
     from transformers import (AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq, EarlyStoppingCallback,
                               Seq2SeqTrainer, TrainerCallback, set_seed)
     from transformers.trainer_utils import get_last_checkpoint
+
+    class OrderedEvalTrainer(Seq2SeqTrainer):
+        """transformers 5 applies `group_by_length` to the *eval* sampler too, so predictions came back
+        length-sorted while metrics paired them with references in dataset order (r2 grid, 2026-10-16:
+        reported ROUGE-1 ~0.05, real ~0.26). Length grouping stays on for training only."""
+
+        def _get_eval_sampler(self, eval_dataset):
+            if eval_dataset is None or self.args.world_size > 1:
+                return super()._get_eval_sampler(eval_dataset)
+            return SequentialSampler(eval_dataset)
 
     set_seed(int(hp["seed"]))
     model = AutoModelForSeq2SeqLM.from_pretrained(model_ref["repo_id"], revision=model_ref.get("revision"))
@@ -106,9 +126,10 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
         def on_evaluate(self, a, state, control, metrics=None, **kw):
             session.beat(force=True, epoch=round(state.epoch or 0, 3), last_eval=metrics)
 
-    trainer = Seq2SeqTrainer(
+    trainer = OrderedEvalTrainer(
         model=model, args=args, data_collator=collator, train_dataset=train_rows, eval_dataset=eval_rows,
-        processing_class=tokenizer, compute_metrics=make_compute_metrics(tokenizer, eval_refs, eval_sources),
+        processing_class=tokenizer,
+        compute_metrics=make_compute_metrics(tokenizer, eval_refs, eval_sources, [r["labels"] for r in eval_rows]),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=int(hp["patience"])), Heartbeat()],
     )
     resume = get_last_checkpoint(str(ckpt_dir)) if ckpt_dir.exists() else None

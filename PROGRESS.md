@@ -9,7 +9,7 @@ personal contact details.
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
-| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 grid started, interrupted by Colab disconnects |
+| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 grid finished but its per-epoch metrics were misordered (decision 22) — rerun as r3 |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
@@ -150,6 +150,26 @@ personal contact details.
     Filter result from that run (valid, unaffected by the bug): 37,361 → 18,914 train pairs kept (50.6 %);
     17.3 % of XL-Sum highlights contain a number absent from their article; median novel-content rate 0.43,
     so the threshold was relaxed from 0.35 to 0.467 to keep half.
+
+22. **r2 grid (Colab T4, 2026-10-16): reported ROUGE-1 ~0.055 for all three LRs, but the models were fine.**
+    transformers 5 applies `group_by_length` (`train_sampling_strategy`) to the *evaluation* sampler as well,
+    so generated summaries came back length-sorted while `compute_metrics` paired them with references and
+    sources in dataset order. Every per-epoch score compared a summary with another article (hence novel
+    rate ~0.90, number precision ~0.08), so early stopping, best-epoch choice and the LR selection were noise.
+    Re-scored in order on the first 64 of the 500 eval articles (greedy, max 128 tokens):
+    | model | ROUGE-1 fp32 | ROUGE-1 fp16 | novel rate | words |
+    |---|---|---|---|---|
+    | AraBART, no fine-tuning | 0.124 | 0.123 | 0.06 | 100 |
+    | r2 lr 1e-5 `best/` (noise-selected epoch) | 0.245 | 0.244 | 0.23 | 21 |
+    | r2 lr 3e-5 `best/` | 0.262 | 0.258 | 0.23 | 19 |
+    | r2 lr 5e-5 epoch 1 checkpoint | 0.270 | 0.272 | 0.22 | 19 |
+    | public baseline Omar10lfc (24 other val articles, local CPU) | 0.294 | – | 0.25 | 20 |
+    fp16 does not hurt generation; the training-batch format is correct (`labels` `<s> … </s>`,
+    `decoder_input_ids` `[</s>, <s>, …]`). Fix: `train.seq2seq.OrderedEvalTrainer` evaluates sequentially
+    (length grouping stays on for training) and `make_compute_metrics` now checks every call that the
+    returned label ids are in eval-set order, raising otherwise (regression tests added). `run_tag: r3`.
+    The "training loss" logged by transformers 5 is ~4× the validation loss, i.e. apparently summed over the
+    4 gradient-accumulation micro-batches; the validation loss and the in-order ROUGE above show training works.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.

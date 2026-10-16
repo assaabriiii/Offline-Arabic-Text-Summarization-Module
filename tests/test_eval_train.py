@@ -129,6 +129,45 @@ def test_train_run_end_to_end_resumable(tmp_path):
     assert "model.safetensors" in prov["files"] and len(prov["files"]["model.safetensors"]["sha256"]) == 64
 
 
+def test_train_run_eval_keeps_dataset_order(tmp_path):
+    """group_by_length must not reorder eval predictions (transformers 5 applies it to eval too)."""
+    tok, base = _tiny_seq2seq(tmp_path)
+    from arabic_summ.text.normalize import NormalizationPolicy
+    from arabic_summ.train import seq2seq as S2S
+
+    cfg = load_config("configs/default.yaml", overrides={"paths": {"root": str(tmp_path / "root")}})
+    pol = NormalizationPolicy.from_dict(cfg["normalization"]["model"])
+    w = SRC.split()
+    texts = [" ".join(w[:k]) for k in (3, 15, 5, 12, 2, 9, 4, 14)]        # lengths in no particular order
+    df = pd.DataFrame({"text": texts, "summary": texts})
+    rows = D.tokenize_pairs(df, tok, pol, 64, 32)
+    hp = {**cfg["finetune"]["train"], "learning_rate": 1e-3, "max_epochs": 1, "per_device_batch_size": 2,
+          "effective_batch_size": 2, "eval_batch_size": 2, "max_target_tokens": 16, "fp16": False,
+          "dataloader_workers": 0, "logging_steps": 1}
+    res = S2S.train_run(cfg, "order", {"repo_id": str(base)}, tok, rows, rows, texts, texts, hp)
+    assert len(res["per_epoch"]) == 1      # compute_metrics raises if predictions come back reordered
+
+
+def test_compute_metrics_detects_misordered_predictions():
+    np = pytest.importorskip("numpy")
+    from types import SimpleNamespace
+
+    from arabic_summ.train.seq2seq import make_compute_metrics
+
+    class Tok:
+        pad_token_id = 0
+
+        def batch_decode(self, ids, skip_special_tokens=True):
+            return ["x"] * len(ids)
+
+    labels = [[5, 6, 2], [7, 2]]
+    cm = make_compute_metrics(Tok(), ["a", "b"], ["a", "b"], labels)
+    padded = np.array([[5, 6, 2], [7, 2, -100]])
+    cm(SimpleNamespace(predictions=np.zeros((2, 3), int), label_ids=padded))           # in order: fine
+    with pytest.raises(RuntimeError, match="not in eval-set order"):
+        cm(SimpleNamespace(predictions=np.zeros((2, 3), int), label_ids=padded[::-1]))
+
+
 def test_ensure_special_tokens_adds_missing_eos_template():
     tr = pytest.importorskip("transformers")
     from tokenizers import Tokenizer, models, pre_tokenizers
