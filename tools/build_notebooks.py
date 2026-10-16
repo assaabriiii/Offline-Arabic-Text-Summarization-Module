@@ -342,9 +342,13 @@ def nb03() -> dict:
 9. Sanity check on 6 benchmark texts: length compliance + fact check vs. the public baseline (no ROUGE here).
 
 **Runtime: T4 GPU.** Every run is **resumable**: if Colab disconnects, reconnect, run cells 0–1, then rerun the
-cell you were in. Finished runs are skipped; an interrupted run resumes from its last epoch checkpoint on Drive.
-Rough T4 estimate (not yet measured): filter ~3 min, each grid run ~0.5–1.5 h, final run ~2–5 h,
-AraT5v2 (fp32) ~1–3 h, decoding grid ~20 min. Colab free sessions end after a few hours: just resume.
+cell you were in. Finished runs are skipped (their results and best model are on Drive). Epoch checkpoints are kept
+on the runtime's local disk (`finetune.train.checkpoint_dir`), not on Drive: after *Restart session* an interrupted
+run resumes from its last epoch; on a new runtime it starts that run again.
+**Drive space:** files written here count against the Drive quota of whoever runs the notebook, also inside a
+shared folder; a full Drive stops uploads silently. Need ~3 GB free. Run the last cell before closing the tab.
+Measured on a T4 (2026-10-16): each grid run ~15–25 min, final run ~1–1.5 h, decoding grid ~20 min;
+AraT5v2 (fp32) is off by default (`RUN_ARAT5`), several hours.
 '''), *setup_cells("03_finetune", "requirements/colab-data.txt"), code('''
 # ==== 3. GPU + ledger ==================================================================
 import json, torch, pandas as pd
@@ -436,8 +440,8 @@ del final_rows
 display(pd.DataFrame(FINAL["per_epoch"])[["epoch", "rouge1", "rouge2", "rougeL", "number_precision", "novel_rate", "loss"]].round(4))
 print("best:", {k: FINAL["best"][k] for k in ("epoch", "rouge1", "rouge2", "rougeL", "number_precision")})
 '''), code('''
-# ==== 9. AraT5v2 single comparison run (fp32; set RUN_ARAT5=False to skip) ==============
-RUN_ARAT5 = True
+# ==== 9. AraT5v2 single comparison run (fp32; off by default, set RUN_ARAT5=True) =======
+RUN_ARAT5 = False   # comparison run (decision 3): fp32 on a T4 takes hours; set True when GPU time allows
 if RUN_ARAT5:
     from transformers import AutoConfig
     T5 = M.model_entry(cfg, "arat5v2")
@@ -523,6 +527,11 @@ print("final  :", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in F
 print("decode :", BEST_DEC, "| rouge1", round(best_dec_row["rouge1"], 4))
 print("export :", PROV["model_name"], PROV["size_mb"], "MB, commit", PROV["code"]["git_commit"])
 print("ledger :", L.summary(cfg))
+'''), code('''
+# ==== 14. Wait until everything has reached Drive (run before closing the tab) ==========
+# Colab uploads Drive files in the background; this blocks until the upload queue is empty.
+drive.flush_and_unmount()
+print("all files uploaded to Drive; rerun cell 1 to keep working")
 ''')]
     return notebook(cells, gpu=True)
 

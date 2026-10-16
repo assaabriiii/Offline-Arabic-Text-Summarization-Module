@@ -129,6 +129,27 @@ def test_train_run_end_to_end_resumable(tmp_path):
     assert "model.safetensors" in prov["files"] and len(prov["files"]["model.safetensors"]["sha256"]) == 64
 
 
+def test_checkpoints_go_to_local_dir_and_are_removed(tmp_path):
+    tok, base = _tiny_seq2seq(tmp_path)
+    from arabic_summ.text.normalize import NormalizationPolicy
+    from arabic_summ.train import seq2seq as S2S
+
+    cfg = load_config("configs/default.yaml", overrides={"paths": {"root": str(tmp_path / "root")}})
+    pol = NormalizationPolicy.from_dict(cfg["normalization"]["model"])
+    rows = D.tokenize_pairs(pd.DataFrame({"text": [SRC] * 4, "summary": [GOOD] * 4}), tok, pol, 64, 32)
+    local = tmp_path / "local_ckpt"
+    hp = {**cfg["finetune"]["train"], "learning_rate": 1e-3, "max_epochs": 1, "per_device_batch_size": 4,
+          "effective_batch_size": 4, "eval_batch_size": 4, "max_target_tokens": 16, "fp16": False,
+          "dataloader_workers": 0, "checkpoint_dir": str(local), "keep_checkpoints": True}
+    S2S.train_run(cfg, "loc", {"repo_id": str(base)}, tok, rows, rows[:2], [GOOD] * 2, [SRC] * 2, hp)
+    assert list((local / "loc").glob("checkpoint-*")), "epoch checkpoints belong on the local disk"
+    out = S2S.run_dir(cfg, "loc")
+    assert (out / "best" / "config.json").exists() and not (out / "checkpoints").exists()
+    # parent missing (e.g. /content off Colab) -> next to the run
+    assert S2S.checkpoint_dir({"checkpoint_dir": str(tmp_path / "nope" / "x")}, out, "loc") == out / "checkpoints"
+    assert S2S.checkpoint_dir({}, out, "loc") == out / "checkpoints"
+
+
 def test_train_run_eval_keeps_dataset_order(tmp_path):
     """group_by_length must not reorder eval predictions (transformers 5 applies it to eval too)."""
     tok, base = _tiny_seq2seq(tmp_path)

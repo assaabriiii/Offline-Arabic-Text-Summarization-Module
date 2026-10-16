@@ -9,7 +9,7 @@ personal contact details.
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
-| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 grid finished but its per-epoch metrics were misordered (decision 22) — rerun as r3 |
+| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 metrics misordered (decision 22); r3 final run reached ROUGE-1 0.284 on validation but did not upload to Drive (contributor's Drive full, decision 23): rerun |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
@@ -170,6 +170,18 @@ personal contact details.
     returned label ids are in eval-set order, raising otherwise (regression tests added). `run_tag: r3`.
     The "training loss" logged by transformers 5 is ~4× the validation loss, i.e. apparently summed over the
     4 gradient-accumulation micro-batches; the validation loss and the in-order ROUGE above show training works.
+
+23. **Epoch checkpoints moved off Drive (2026-10-17).** The r3 grid and final run trained fine on a
+    contributor's Colab, but almost nothing reached the shared Drive: the upload stopped mid-checkpoint
+    (`checkpoint-888` without `optimizer.pt`). Files a collaborator writes into a shared folder count against
+    *their own* Drive quota, and every epoch checkpoint is ~1.5 GB (deleted ones sit in Trash), so their
+    free 15 GB filled within about an hour and uploads failed silently. Now `finetune.train.checkpoint_dir`
+    (`/content/arabic_summ_checkpoints`) keeps checkpoints on the runtime's local disk; Drive only gets
+    results, logs and each run's `best/` model (~0.6 GB per run, ~3 GB for all of 03). Trade-off: an
+    interrupted run resumes after *Restart session*, but on a fresh runtime it restarts from scratch (grid run
+    ~15–25 min, final ~1–1.5 h). 03 now ends with `drive.flush_and_unmount()` (waits for pending uploads), and
+    the AraT5v2 comparison is off by default (`RUN_ARAT5`), since fp32 batch 4 ran out of T4 memory and the
+    reduced setting (batch 2 × 8, gradient checkpointing) takes hours.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.

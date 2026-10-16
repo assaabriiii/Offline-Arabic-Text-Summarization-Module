@@ -1,9 +1,13 @@
 """One resumable fine-tuning run with the Hugging Face Seq2SeqTrainer (transformers v5).
 
-Layout on Drive:  models/runs/<name>/checkpoints/  (epoch checkpoints, deleted when the run
-finishes unless keep_checkpoints), models/runs/<name>/best/ (best epoch by validation ROUGE-1),
-result.json, log_history.json. A finished run is skipped via its step marker; an interrupted one
-resumes from its last epoch checkpoint (optimizer, scheduler, RNG and early-stopping state).
+Layout on Drive:  models/runs/<name>/best/ (best epoch by validation ROUGE-1), result.json,
+log_history.json. Epoch checkpoints (~1.5 GB each with optimizer state) go to
+`checkpoint_dir`/<name> on the runtime's local disk when configured, so they never fill the Drive
+quota (2026-10-17: a contributor's full Drive silently stopped every upload), else to
+models/runs/<name>/checkpoints/; either way they are deleted when the run finishes unless
+keep_checkpoints. A finished run is skipped via its step marker; an interrupted one resumes from its
+last epoch checkpoint (optimizer, scheduler, RNG and early-stopping state) if that still exists:
+local checkpoints survive a Colab "Restart session" but not a new runtime.
 """
 
 from __future__ import annotations
@@ -22,6 +26,15 @@ from .ledger import GPUSession
 
 def run_dir(cfg: Mapping, name: str) -> Path:
     return C.path(cfg, "models", "runs", name, "x").parent
+
+
+def checkpoint_dir(hp: Mapping, out: Path, name: str) -> Path:
+    """Local-disk checkpoint folder from `checkpoint_dir`; falls back to <run>/checkpoints when unset
+    or when its parent directory doesn't exist (tests, machines without /content)."""
+    local = hp.get("checkpoint_dir")
+    if local and Path(local).parent.is_dir():
+        return Path(local) / name
+    return out / "checkpoints"
 
 
 def run_name(model_key: str, lr: float, fraction: float, tag: str | None = None) -> str:
@@ -101,7 +114,7 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
     fp16 = bool(hp.get("fp16")) and torch.cuda.is_available()
     per_dev = int(hp["per_device_batch_size"])
     accum = max(1, int(hp["effective_batch_size"]) // per_dev)
-    ckpt_dir = out / "checkpoints"
+    ckpt_dir = checkpoint_dir(hp, out, name)
     args, dropped = training_args(
         output_dir=str(ckpt_dir), eval_strategy="epoch", save_strategy="epoch", logging_strategy="steps",
         logging_steps=int(hp.get("logging_steps", 50)), learning_rate=float(hp["learning_rate"]),

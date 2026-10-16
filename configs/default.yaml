@@ -160,6 +160,8 @@ finetune:
     grid_train_fraction: 0.25 # LR screening on a seeded 25 % of filtered train (T4 budget), final run on 100 %
     final_train_fraction: 1.0
     keep_checkpoints: false
+    checkpoint_dir: /content/arabic_summ_checkpoints  # epoch checkpoints on Colab's local disk, not Drive
+                              # (Drive quota); falls back to <run>/checkpoints if /content doesn't exist
     run_tag: r3               # bump when a fix invalidates earlier runs (r1: labels had no EOS; r2: eval metrics misordered; see PROGRESS)
   arat5v2:                    # single comparison run (decision 3)
     learning_rate: 5.0e-5
