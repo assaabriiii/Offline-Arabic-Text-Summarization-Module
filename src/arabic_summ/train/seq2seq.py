@@ -37,6 +37,22 @@ def checkpoint_dir(hp: Mapping, out: Path, name: str) -> Path:
     return out / "checkpoints"
 
 
+CHECKPOINT_FILES = ("trainer_state.json", "optimizer.pt", "scheduler.pt", "config.json")
+
+
+def latest_checkpoint(*dirs: Path) -> str | None:
+    """Newest *complete* `checkpoint-<step>` across `dirs` (local disk and/or a copy on Drive).
+    Skips half-written or half-uploaded ones (a full Drive once left a checkpoint without optimizer.pt)."""
+    found = []
+    for d in dirs:
+        for c in Path(d).glob("checkpoint-*") if Path(d).is_dir() else []:
+            step = c.name.removeprefix("checkpoint-")
+            has_weights = (c / "model.safetensors").exists() or (c / "pytorch_model.bin").exists()
+            if step.isdigit() and has_weights and all((c / f).exists() for f in CHECKPOINT_FILES):
+                found.append((int(step), str(c)))
+    return max(found)[1] if found else None
+
+
 def run_name(model_key: str, lr: float, fraction: float, tag: str | None = None) -> str:
     """`tag` versions runs, so a code fix never resumes checkpoints of an older, broken run."""
     return f"{model_key}_lr{lr:g}_f{fraction:g}" + (f"_{tag}" if tag else "")
@@ -99,7 +115,6 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
     from torch.utils.data import SequentialSampler
     from transformers import (AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq, EarlyStoppingCallback,
                               Seq2SeqTrainer, TrainerCallback, set_seed)
-    from transformers.trainer_utils import get_last_checkpoint
 
     class OrderedEvalTrainer(Seq2SeqTrainer):
         """transformers 5 applies `group_by_length` to the *eval* sampler too, so predictions came back
@@ -148,7 +163,7 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
         compute_metrics=make_compute_metrics(tokenizer, eval_refs, eval_sources, [r["labels"] for r in eval_rows]),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=int(hp["patience"])), Heartbeat()],
     )
-    resume = get_last_checkpoint(str(ckpt_dir)) if ckpt_dir.exists() else None
+    resume = latest_checkpoint(ckpt_dir, out / "checkpoints")     # local first, or a copy saved to Drive
     print(f"[{name}] train={len(train_rows)} eval={len(eval_rows)} accum={accum} fp16={fp16} "
           f"resume={resume} ignored_args={dropped}")
     try:
@@ -177,6 +192,7 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
     session.close("finished", best_rouge1=result["best"].get("rouge1"))
     if not hp.get("keep_checkpoints", False):
         shutil.rmtree(ckpt_dir, ignore_errors=True)
+        shutil.rmtree(out / "checkpoints", ignore_errors=True)
     mark_step_done(cfg, step, outputs=[best / "config.json", out / "result.json"], best=result["best"])
     del trainer, model
     if torch.cuda.is_available():

@@ -218,3 +218,23 @@ def test_run_name_tag():
 
     assert run_name("arabart", 3e-5, 0.25) == "arabart_lr3e-05_f0.25"
     assert run_name("arabart", 3e-5, 0.25, "r2") == "arabart_lr3e-05_f0.25_r2"
+
+
+def test_latest_checkpoint_skips_incomplete_and_searches_all_dirs(tmp_path):
+    from arabic_summ.train.seq2seq import CHECKPOINT_FILES, latest_checkpoint
+
+    def ckpt(d, step, skip=()):
+        c = tmp_path / d / f"checkpoint-{step}"
+        c.mkdir(parents=True)
+        for f in (*CHECKPOINT_FILES, "model.safetensors"):
+            if f not in skip:
+                (c / f).write_text("x")
+        return str(c)
+
+    local, drive = tmp_path / "local", tmp_path / "drive"
+    assert latest_checkpoint(local, drive) is None
+    a = ckpt("drive", 1183)
+    assert latest_checkpoint(local, drive) == a                      # copy on Drive is found
+    ckpt("drive", 3549, skip=("optimizer.pt",))                      # half-uploaded: ignored
+    b = ckpt("local", 2366)
+    assert latest_checkpoint(local, drive) == b
