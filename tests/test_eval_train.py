@@ -123,6 +123,10 @@ def test_train_run_end_to_end_resumable(tmp_path):
     assert (S2S.run_dir(cfg, name) / "best" / "config.json").exists()
     assert not (S2S.run_dir(cfg, name) / "checkpoints").exists()
     assert S2S.train_run(cfg, name, {"repo_id": "unused"}, tok, rows, rows, [], [], hp) == res   # skipped
+    import shutil
+    shutil.rmtree(S2S.run_dir(cfg, name) / "best")          # marker present but outputs lost -> retrains
+    again = S2S.train_run(cfg, name, {"repo_id": str(base)}, tok, rows, rows[:2], [GOOD] * 2, [SRC] * 2, hp)
+    assert (S2S.run_dir(cfg, name) / "best" / "config.json").exists() and again["epochs_run"] == 2
     prov = export_model(cfg, res["best_dir"], "tiny_ft", {"num_beams": 2}, {"base": "tiny"})
     out = tmp_path / "root" / "models" / "tiny_ft"
     assert json.loads((out / "decoding.json").read_text()) == {"num_beams": 2}

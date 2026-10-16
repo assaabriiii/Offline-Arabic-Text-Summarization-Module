@@ -91,7 +91,9 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
     step = f"03_run_{name}"
     out = run_dir(cfg, name)
     if step_done(cfg, step):
-        return read_json(out / "result.json")
+        if (out / "result.json").exists() and (out / "best" / "config.json").exists():
+            return read_json(out / "result.json")
+        print(f"[{name}] marked done but result.json / best/ are missing on Drive: training it again")
 
     import torch
     from torch.utils.data import SequentialSampler
