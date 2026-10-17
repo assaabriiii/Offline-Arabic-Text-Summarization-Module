@@ -10,7 +10,7 @@ personal contact details.
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **done (2026-10-18)**: `models/arabart_ft` exported (534.6 MB), validation ROUGE-1 0.284 (greedy, 500 articles), 0.303 with the selected 4-beam decoding (300 other articles), number precision 0.96–1.00 (decision 24). AraT5v2 comparison not run yet (optional, off by default) |
-| 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
+| 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
@@ -202,6 +202,24 @@ personal contact details.
       baseline 0.67–1.00; ~1.2 s/text. Example `NEWS-0055` (hybrid) reads fluently but merges the positions of
       two speakers (the mufti and his critics) into one quote: a coherence/attribution error that numbers and
       novel-word checks cannot detect. The human evaluation (05) must judge these.
+
+25. **04 results (Colab CPU, 2 vCPU Xeon 2.20 GHz, 2 threads, batch 1, 4-beam decoding; 200 XL-Sum validation
+    articles for ROUGE, 24 stratified benchmark texts through the segmentwise pipeline for latency):**
+    | variant | weights | peak RSS | median / p90 latency | R1 | number precision | bench length ok / numbers ok | gates |
+    |---|---|---|---|---|---|---|---|
+    | torch FP32 | 531 MB | 1.45 GB | 19.7 / 31.2 s | 0.303 | 1.000 | 0.88 / 1.00 | latency |
+    | **torch INT8 (dynamic)** | 531 MB on disk | 1.88 GB | **11.1 / 15.4 s** | **0.305** | 0.964 | 0.79 / 0.88 | pass |
+    | ONNX FP32 | 1,310 MB | 2.32 GB | 14.7 / 24.8 s | 0.303 | 1.000 | 0.88 / 1.00 | size |
+    | ONNX INT8 (AVX2) | 329 MB | 1.26 GB | 15.1 / 24.0 s | 0.296 | 1.000 | 0.83 / 0.96 | latency (by 0.11 s) |
+    PyTorch INT8 was the only variant to pass all gates, so it was exported (its composite score of 1.0 is
+    trivial with one candidate). **Caveat:** the latency gate is a reference-machine criterion; on 2 vCPUs it
+    decided between torch INT8 and ONNX INT8 by 0.11 s, and ONNX INT8 is smaller (329 MB), lighter (1.26 GB)
+    and had more benchmark outputs with all numbers supported (0.96 vs 0.88, 24 texts). Re-run both on the 8-core
+    reference machine (`bench/`) before freezing the choice. ONNX FP32 duplicates decoder weights
+    (decoder + decoder-with-past), hence 1.3 GB.
+    Fixes found while running 04: the ONNX venv is now isolated and built with uv (Colab's Python has no
+    ensurepip; the system diffusers broke optimum), and tokenizer files written by transformers 5
+    (`extra_special_tokens` as a list) now load under transformers 4.57.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
