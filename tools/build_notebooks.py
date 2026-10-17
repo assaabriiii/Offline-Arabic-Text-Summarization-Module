@@ -584,16 +584,26 @@ ONNX_ROOT = C.path(cfg, "models", f"{TAG}_onnx", "x").parent
 OUT_DIR = C.path(cfg, "logs", f"04_optimize_{TAG}", "x").parent
 print("source:", SRC_DIR, "| decoding:", DECODING, "| ONNX ->", ONNX_ROOT)
 '''), code('''
-# ==== 4. Separate ONNX environment (transformers 4.x + optimum-onnx) ====================
+# ==== 4. Separate ONNX environment (transformers 4.x + optimum-onnx), fully isolated =====
+# Not --system-site-packages: Colab's preinstalled packages (e.g. diffusers, which needs hub 1.x) leak in and
+# break optimum. uv creates the venv (Colab's Python has no ensurepip); torch CPU = Colab's version.
+import torch as _t
 ORT_PY = "/content/ort_env/bin/python"
 ENV = {**os.environ, "PYTHONPATH": f"{REPO_DIR}/src"}
-if not os.path.exists(ORT_PY):
-    sh("python -m venv --system-site-packages /content/ort_env")
-    sh(f"{ORT_PY} -m pip install -q -r {REPO_DIR}/requirements/colab-onnx.txt")
-chk = subprocess.run([ORT_PY, "-c", "import transformers, onnxruntime, optimum.onnxruntime as o; "
-                      "print('transformers', transformers.__version__, '| onnxruntime', onnxruntime.__version__)"],
-                     capture_output=True, text=True)
-print(chk.stdout, chk.stderr[-1500:])
+if not os.path.exists("/content/ort_env/.ready"):
+    shutil.rmtree("/content/ort_env", ignore_errors=True)
+    sh("pip install -q uv==0.9.5")
+    sh(f"uv venv -q --python {sys.executable} /content/ort_env")
+    sh(f"uv pip install -q --python {ORT_PY} torch=={_t.__version__.split('+')[0]} --index-url https://download.pytorch.org/whl/cpu")
+    sh(f"uv pip install -q --python {ORT_PY} -r {REPO_DIR}/requirements/colab-onnx.txt")
+    open("/content/ort_env/.ready", "w").close()
+chk = subprocess.run([ORT_PY, "-c", "import sys, torch, transformers, onnxruntime, huggingface_hub; "
+                      "from optimum.onnxruntime import ORTModelForSeq2SeqLM; "
+                      "print('python', sys.version.split()[0], '| torch', torch.__version__, '| transformers', transformers.__version__, "
+                      "'| hub', huggingface_hub.__version__, '| onnxruntime', onnxruntime.__version__)"],
+                     capture_output=True, text=True, env=ENV)
+print(chk.stdout, chk.stderr[-2000:])
+assert chk.returncode == 0, "ONNX environment broken: paste the output above"
 '''), code('''
 # ==== 5. Export ONNX FP32 + dynamic INT8 (skipped if already on Drive) ==================
 if not (ONNX_ROOT / "int8" / "encoder_model.onnx").exists():
