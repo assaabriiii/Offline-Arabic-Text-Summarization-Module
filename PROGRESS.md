@@ -9,7 +9,7 @@ personal contact details.
 | 0 | Package skeleton, config, env report, resumable steps, tests | done |
 | 1 | `01_data.ipynb`: XL-Sum + dedup + benchmark scaffold + leakage check + manifest | **done**, run 2026-10-15 (see results below) |
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
-| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **in progress**: filter done; r1 grid collapsed (tokenizer bug, fixed `f4ae969`); r2 metrics misordered (decision 22); r3 final run reached ROUGE-1 0.284 on validation but did not upload to Drive (contributor's Drive full, decision 23): rerun |
+| 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **done (2026-10-18)**: `models/arabart_ft` exported (534.6 MB), validation ROUGE-1 0.284 (greedy, 500 articles), 0.303 with the selected 4-beam decoding (300 other articles), number precision 0.96–1.00 (decision 24). AraT5v2 comparison not run yet (optional, off by default) |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **built, awaiting Colab CPU run** (dry run possible before 03 finishes) |
 | 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
@@ -182,6 +182,26 @@ personal contact details.
     ~15–25 min, final ~1–1.5 h). 03 now ends with `drive.flush_and_unmount()` (waits for pending uploads), and
     the AraT5v2 comparison is off by default (`RUN_ARAT5`), since fp32 batch 4 ran out of T4 memory and the
     reduced setting (batch 2 × 8, gradient checkpointing) takes hours.
+
+24. **03 finished (r3, Colab T4, 2026-10-16 → 2026-10-18; ledger total 10.5 T4-hours incl. all failed runs).**
+    - LR grid (25 % of filtered train, best epoch per run, 500 validation articles, greedy):
+      1e-5 → R1 0.2821 / number precision 0.980; 3e-5 → 0.2825 / 0.948; 5e-5 → 0.2783 / 0.951 (stopped at 3).
+      Selected **1e-5**: 3e-5 has the top R1 but its number precision is 0.032 below 1e-5's (tolerance 0.02).
+    - Final run, 100 % of filtered train (18,914 pairs), lr 1e-5: R1 by epoch 0.2799 / 0.2821 / 0.2830 /
+      **0.2838** / 0.2834 → best epoch 4 (R2 0.123, RL 0.242, number precision 0.963, novel rate 0.22,
+      19 words). The run was split over two Colab sessions (free-tier quota): epochs 1–2, then the epoch-2
+      checkpoint was copied to Drive and the next session resumed from it (`latest_checkpoint`, commit 2976dfd).
+      The resumed trainer could not reload its pre-resume best checkpoint (old local path); harmless here because
+      epochs 3–4 improved on it. Fixed afterwards: a Drive checkpoint is copied back to the local checkpoint
+      folder before resuming.
+    - Decoding grid (300 validation articles disjoint from the 500): greedy R1 0.310 but number precision 0.933;
+      selected **4 beams, length penalty 1.5, no-repeat 3**: R1 0.303, R2 0.144, RL 0.259, number precision 1.000,
+      novel rate 0.19, 0.08 s/text on the T4. Beams 2–4 all lie within R1 0.301–0.303.
+    - Sanity check, 6 benchmark texts × 3 strategies vs the public baseline (fp16, T4): numbers supported in all
+      outputs of both models; novel rate ours 0.16–0.19 vs baseline 0.20–0.21; length compliance ours 0.67–0.83,
+      baseline 0.67–1.00; ~1.2 s/text. Example `NEWS-0055` (hybrid) reads fluently but merges the positions of
+      two speakers (the mufti and his critics) into one quote: a coherence/attribution error that numbers and
+      novel-word checks cannot detect. The human evaluation (05) must judge these.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.

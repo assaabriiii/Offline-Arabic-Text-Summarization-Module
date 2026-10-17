@@ -164,6 +164,13 @@ def train_run(cfg: Mapping, name: str, model_ref: Mapping, tokenizer, train_rows
         callbacks=[EarlyStoppingCallback(early_stopping_patience=int(hp["patience"])), Heartbeat()],
     )
     resume = latest_checkpoint(ckpt_dir, out / "checkpoints")     # local first, or a copy saved to Drive
+    if resume and Path(resume).parent != ckpt_dir:
+        # resume from a local copy: the trainer state records its best checkpoint under ckpt_dir, and a
+        # missing best checkpoint makes load_best_model_at_end keep the last epoch instead (2026-10-18)
+        local_copy = ckpt_dir / Path(resume).name
+        if not local_copy.exists():
+            shutil.copytree(resume, local_copy)
+        resume = str(local_copy)
     print(f"[{name}] train={len(train_rows)} eval={len(eval_rows)} accum={accum} fp16={fp16} "
           f"resume={resume} ignored_args={dropped}")
     try:
