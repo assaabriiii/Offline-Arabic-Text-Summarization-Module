@@ -238,3 +238,23 @@ def test_latest_checkpoint_skips_incomplete_and_searches_all_dirs(tmp_path):
     ckpt("drive", 3549, skip=("optimizer.pt",))                      # half-uploaded: ignored
     b = ckpt("local", 2366)
     assert latest_checkpoint(local, drive) == b
+
+
+def test_load_tokenizer_reads_v5_saved_files_with_list_extra_special_tokens(tmp_path):
+    """transformers 5 writes `extra_special_tokens` as a list, which 4.x rejects (04 ONNX env, 2026-10-18)."""
+    pytest.importorskip("transformers")
+    from tokenizers import Tokenizer, models, pre_tokenizers
+
+    from arabic_summ.models import _fast_tokenizer_from_files, load_tokenizer
+
+    vocab = {"<s>": 0, "<pad>": 1, "</s>": 2, "<unk>": 3, "قال": 4, "الوزير": 5}
+    tk = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    tk.save(str(tmp_path / "tokenizer.json"))
+    (tmp_path / "tokenizer_config.json").write_text(json.dumps({
+        "backend": "tokenizers", "bos_token": "<s>", "eos_token": "</s>", "pad_token": "<pad>",
+        "unk_token": "<unk>", "extra_special_tokens": ["<s>", "<pad>", "</s>"],
+        "tokenizer_class": "TokenizersBackend"}), encoding="utf-8")
+    for tok in (_fast_tokenizer_from_files(tmp_path), load_tokenizer(str(tmp_path))):
+        assert (tok.eos_token, tok.pad_token_id) == ("</s>", 1)
+    assert load_tokenizer(str(tmp_path))("قال الوزير")["input_ids"] == [0, 4, 5, 2]

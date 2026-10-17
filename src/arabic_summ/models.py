@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -37,11 +38,29 @@ def load_tokenizer(path_or_repo: str, revision: str | None = None, **kw):
 
     try:
         return ensure_special_tokens(AutoTokenizer.from_pretrained(path_or_repo, revision=revision, **kw))
-    except (TypeError, ValueError):
-        # also: a tokenizer saved by transformers 5 declares `TokenizersBackend`, unknown to 4.x (ONNX env)
-        tok = PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
+    except (TypeError, ValueError, AttributeError):
+        # also: a tokenizer saved by transformers 5 declares `TokenizersBackend` and writes
+        # `extra_special_tokens` as a list; transformers 4.x (ONNX env) rejects both
+        local = Path(path_or_repo)
+        if (local / "tokenizer.json").is_file():
+            tok = _fast_tokenizer_from_files(local)
+        else:
+            tok = PreTrainedTokenizerFast.from_pretrained(path_or_repo, revision=revision, **kw)
         tok.model_input_names = ["input_ids", "attention_mask"]   # seq2seq models take no token_type_ids
         return ensure_special_tokens(tok)
+
+
+SPECIAL_TOKEN_KEYS = ("bos_token", "eos_token", "unk_token", "pad_token", "sep_token", "cls_token", "mask_token")
+
+
+def _fast_tokenizer_from_files(model_dir: Path):
+    """tokenizer.json + the plain special tokens of tokenizer_config.json, ignoring version-specific fields."""
+    from transformers import PreTrainedTokenizerFast
+
+    conf_path = model_dir / "tokenizer_config.json"
+    conf = json.loads(conf_path.read_text(encoding="utf-8")) if conf_path.is_file() else {}
+    specials = {k: conf[k] for k in SPECIAL_TOKEN_KEYS if isinstance(conf.get(k), str)}
+    return PreTrainedTokenizerFast(tokenizer_file=str(model_dir / "tokenizer.json"), **specials)
 
 
 def ensure_special_tokens(tok):
