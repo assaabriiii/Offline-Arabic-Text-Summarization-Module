@@ -361,6 +361,33 @@ personal contact details.
     - Still open: 04 for the style model (INT8, latency, ≤ 0.02 R1 drop), the CPU half of 05 (deployed variant),
       BERTScore, human evaluation (fluency/coherence of a mostly-extractive output), reference review.
 
+34. **04 + 05 CPU half for the style model (Colab CPU, 2 vCPU Xeon 2.20 GHz, 2 threads, 2026-10-18/19, code cd537b3).**
+    04 (`direct` strategy; validation R1 is vs one-sentence XL-Sum highlights, only for the FP32→INT8 drop):
+    | variant | size MB | RSS MB | median / p90 s | val R1 | drop | gates |
+    |---|---|---|---|---|---|---|
+    | **torch_int8 (selected)** | 531.3 | 1881 | **12.8** / 20.2 | 0.1801 | 0.002 | all pass |
+    | torch_fp32 | 531.3 | 1437 | 22.0 / 38.1 | 0.1818 | – | latency |
+    | onnx_fp32 | 1310.2 | 2420 | 13.7 / 23.9 | 0.1818 | 0 | size |
+    | onnx_int8 | 329.3 | 1333 | 17.0 / 26.1 | 0.1729 | 0.009 | latency (2 vCPU) |
+    Exported `models/arabart_ft_style_cpu` (torch INT8, runtime.json strategy `direct`).
+    **05 acceptance, primary `cpu_torch_int8_direct` (240 texts; INTERIM, references model-drafted, pending review):**
+    | criterion | value | target | pass |
+    |---|---|---|---|
+    | ROUGE-1 F1 (primary, unstemmed) | 0.376 (95 % CI 0.367–0.387) | > 0.40 | **no** |
+    | ROUGE-1 F1, XL-Sum-style stemming (secondary) | 0.436 (0.426–0.445) | > 0.40 | yes, if approved (decision 30) |
+    | ROUGE-2 / ROUGE-L | 0.194 / 0.247 | reported | – |
+    | length 10–30 %, 30–300 words | 1.000 | all texts | yes |
+    | median latency 300–700 / all (2 vCPU) | 10.4 s / 12.9 s | ≤ 15 / ≤ 25 s | yes (reference machine: bench/) |
+    | RAM / model size | 1881 MB / 531 MB | ≤ 8192 / ≤ 1024 MB | yes |
+    | factual (auto pre-screen numbers_ok) | 0.996 | human ≥ 0.8 | pending human evaluation |
+    | human scores ≥ 4 | – | ≥ 4 each | pending |
+    INT8 vs FP32 on the benchmark: 0.3769 → 0.3763 (−0.0006). vs public baseline +0.059 R1 (95 % CI +0.050..+0.069).
+    By domain: news 0.362 / 0.423 xlsum, org_report 0.391 / 0.448; by length: 300–499 0.397, 500–699 0.380,
+    700–1000 0.353. BERTScore F1 (bert-base-multilingual-cased): primary 0.751, ft_style_direct 0.751, segmentwise
+    0.751, hybrid 0.746, extractive 0.745, lead 0.744, baseline 0.729.
+    Blind human-evaluation sheets written for the primary (100 items, 50 per domain, 20 calibration):
+    `logs/05_evaluate/human_eval/` (rater_A/B, rater_REF_calibration; key.csv hidden). Report: `logs/05_evaluate/report.md`.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
