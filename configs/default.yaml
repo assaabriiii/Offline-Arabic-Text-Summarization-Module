@@ -218,14 +218,16 @@ optimize:
     max_median_seconds: 15
     max_rouge1_drop: 0.02      # vs torch_fp32
   weights: {quality: 0.5, time: 0.3, memory: 0.1, size: 0.1}   # proposal composite score
-  export_name: arabart_ft_cpu
+  source_model: arabart_ft_style   # model key to optimize (03b style model, PROGRESS 32; was arabart_ft)
+  export_name: arabart_ft_style_cpu  # arabart_ft_cpu (03 model, 05 CPU half of 2026-10-18) stays on Drive
 
 # ------------------------------------------------------- evaluation (05)
 evaluate:
   approved_only: false        # true for the final report: only human-approved references count
-  primary_strategy: segmentwise   # fixed before looking at benchmark scores; others are ablations
+  ft_model: arabart_ft_style      # fine-tuned model for the GPU systems (PROGRESS 32; was arabart_ft)
+  primary_strategy: direct        # chosen on the dev set (PROGRESS 32), before any benchmark run of this model
   secondary_rouge_stem: snowball  # extra *_xlsum ROUGE columns (XL-Sum-style stemming); primary stays unstemmed (PROGRESS 30)
-  ablation_strategies: [direct, hybrid]
+  ablation_strategies: [segmentwise, hybrid]
   acceptance:                 # proposal acceptance criteria
     min_rouge1: 0.40
     min_length_ok: 1.0

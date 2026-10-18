@@ -324,6 +324,25 @@ personal contact details.
     Expected effect (estimate, not measured): +0.01–0.03 R1; only if the dev result beats the current model does
     it go through 04 and 05.
 
+32. **03b result: style model beats lead on the dev set (Colab T4, 2026-10-18, 0.26 T4-hours).** 9,037 filtered
+    oddadmix pairs, 0 leaked; lr 3e-5, 3 epochs, best epoch 2 by dev R1 (training-time dev R1, whole article,
+    greedy, ~50-word outputs: 0.239 / **0.256** / 0.248). Exported `models/arabart_ft_style` (534.6 MB).
+    Dev set through the pipeline (GPU fp16, configured fill to target; strict / XL-Sum-style R1):
+    | model | strategy | R1 | R1 xlsum | length ok | filled share | numbers ok | novel rate |
+    |---|---|---|---|---|---|---|---|
+    | arabart_ft | segmentwise | 0.306 | 0.369 | 1.000 | 0.188 | 0.989 | 0.121 |
+    | arabart_ft | direct | 0.307 | 0.363 | 1.000 | 0.243 | 0.956 | 0.120 |
+    | arabart_ft_style | segmentwise | 0.343 | 0.405 | 1.000 | 0.152 | 0.967 | 0.015 |
+    | **arabart_ft_style** | **direct** | **0.360** | **0.418** | 1.000 | 0.177 | 0.989 | 0.017 |
+    | lead / extractive | – | 0.355 / 0.329 | 0.416 / 0.390 | 1.000 | 0 | 1.000 | 0 |
+    - **Selected for 04/05: `arabart_ft_style` + `direct`** (dev set; `optimize.source_model`, `evaluate.ft_model`,
+      `evaluate.primary_strategy: direct`; segmentwise and hybrid become ablations). Chosen before any benchmark
+      run of this model. The 03 CPU model stays on Drive (`arabart_ft_cpu`); 04 writes `arabart_ft_style_cpu`.
+    - The style model copies heavily: novel-content rate 0.017 (references 0.12), i.e. mostly compressed source
+      sentences. Good for factual accuracy; fluency/coherence and "abstractive" character must be judged in the
+      human evaluation and stated in the report. Dev references are Haiku-drafted, benchmark references
+      Opus-drafted: the benchmark number may differ.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

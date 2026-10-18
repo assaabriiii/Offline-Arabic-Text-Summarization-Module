@@ -566,7 +566,8 @@ from arabic_summ.io_utils import read_json, write_json
 from arabic_summ.optimize import select as SEL
 from arabic_summ.optimize.variants import VARIANTS, model_dir_for
 OPT, SEED = cfg["optimize"], cfg["project"]["seed"]
-FT_DIR = M.local_path(cfg, "arabart_ft")
+SRC_KEY = OPT.get("source_model", "arabart_ft")
+FT_DIR = M.local_path(cfg, SRC_KEY)
 DRY_RUN = not (FT_DIR / "model.safetensors").exists()
 LOCAL = Path("/content/opt"); LOCAL.mkdir(parents=True, exist_ok=True)
 if DRY_RUN:
@@ -576,7 +577,7 @@ if DRY_RUN:
     TAG, DECODING = "dryrun_baseline", dict(cfg["decoding"])
     print("DRY RUN: fine-tuned model not found, using", b["repo_id"])
 else:
-    SRC_DIR, TAG, DECODING = FT_DIR, OPT["export_name"], M.decoding_for(cfg, "arabart_ft")
+    SRC_DIR, TAG, DECODING = FT_DIR, OPT["export_name"], M.decoding_for(cfg, SRC_KEY)
 TORCH_DIR = LOCAL / "torch"
 if not (TORCH_DIR / "config.json").exists():
     shutil.copytree(SRC_DIR, TORCH_DIR, dirs_exist_ok=True)
@@ -735,11 +736,12 @@ SYSTEMS = {"lead": {"variant": None, "strategy": "lead"}, "extractive": {"varian
 b = M.model_entry(cfg, "arabart_xlsum_omar")
 SYSTEMS[f"baseline_{EV['primary_strategy']}"] = {"variant": "torch_fp32", "model_dir": "HF:baseline", "device": "cuda",
                                                  "strategy": EV["primary_strategy"], "decoding": dict(cfg["decoding"])}
-FT_DIR = M.local_path(cfg, "arabart_ft")
+FT_KEY = EV.get("ft_model", "arabart_ft")
+FT_DIR = M.local_path(cfg, FT_KEY)
 if (FT_DIR / "config.json").exists():
     for st in [EV["primary_strategy"], *EV["ablation_strategies"]]:
-        SYSTEMS[f"ft_{st}"] = {"variant": "torch_fp32", "model_dir": str(FT_DIR), "device": "cuda", "strategy": st,
-                               "decoding": M.decoding_for(cfg, "arabart_ft")}
+        SYSTEMS[f"{FT_KEY.replace('arabart_', '')}_{st}"] = {"variant": "torch_fp32", "model_dir": str(FT_DIR), "device": "cuda",
+                                                            "strategy": st, "decoding": M.decoding_for(cfg, FT_KEY)}
 CPU_DIR = C.root(cfg) / "models" / cfg["optimize"]["export_name"]
 CPU_RT = read_json(CPU_DIR / "runtime.json") if (CPU_DIR / "runtime.json").exists() else None
 if CPU_RT:
@@ -752,7 +754,7 @@ if CPU_RT:
         SYSTEMS[f"cpu_onnx_int8_{EV['primary_strategy']}"] = {
             "variant": "onnx_int8", "model_dir": str(onnx_int8), "device": "cpu", "strategy": EV["primary_strategy"],
             "decoding": cpu_dec}
-PRIMARY = next((k for k in SYSTEMS if k.startswith("cpu_")), next((k for k in SYSTEMS if k.startswith("ft_")), None))
+PRIMARY = next((k for k in SYSTEMS if k.startswith("cpu_")), next((k for k in SYSTEMS if k.startswith("ft")), None))
 print("runtime:", GPU, "| systems:", list(SYSTEMS), "| primary:", PRIMARY, "| fine-tuned found:", (FT_DIR / "config.json").exists())
 '''), code('''
 # ==== 4. ONNX environment (CPU runtime, only if an ONNX system is listed; same as 04) ====
