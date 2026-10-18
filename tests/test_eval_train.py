@@ -258,3 +258,28 @@ def test_load_tokenizer_reads_v5_saved_files_with_list_extra_special_tokens(tmp_
     for tok in (_fast_tokenizer_from_files(tmp_path), load_tokenizer(str(tmp_path))):
         assert (tok.eos_token, tok.pad_token_id) == ("</s>", 1)
     assert load_tokenizer(str(tmp_path))("قال الوزير")["input_ids"] == [0, 4, 5, 2]
+
+
+def test_external_pairs_filter_and_leakage():
+    import pandas as pd
+    from arabic_summ.train.external import ngram_overlap, prepare_pairs
+
+    base = "أعلنت وزارة الصحة اليوم عن افتتاح مستشفى جديد في المدينة يضم 200 سرير ويخدم آلاف المرضى من المناطق المجاورة"
+    art = lambda k: " ".join([base] * 8) + f" وقال المسؤول رقم {k} إن العمل سيبدأ قريبا."
+    bench = {"NEWS-1": " ".join(["نص معياري محمي لا يجوز التدريب عليه أبدا في أي حال من الأحوال"] * 6)}
+    rows = [
+        {"t": art(1), "s": "افتتحت وزارة الصحة مستشفى جديدا يضم 200 سرير. ويخدم المستشفى آلاف المرضى."},       # keep
+        {"t": art(2), "s": "افتتحت وزارة الصحة مستشفى يضم 999 سريرا لخدمة آلاف المرضى في المدينة."},           # number not in text
+        {"t": "قصير جدا", "s": "ملخص قصير لنص قصير جدا لا يكفي للتدريب أبدا في هذه الحالة."},                   # too short
+        {"t": bench["NEWS-1"] + " " + art(3), "s": "افتتحت وزارة الصحة مستشفى جديدا يضم 200 سرير للمرضى."},   # leaks benchmark
+        {"t": art(4), "s": "The ministry opened a new hospital with 200 beds serving thousands of patients."},  # not Arabic
+    ]
+    df = pd.DataFrame(rows)
+    scfg = {"dataset": {"text_col": "t", "summary_col": "s"}, "min_source_words": 50, "max_source_words": 1100,
+            "min_summary_words": 8, "min_arabic_ratio": 0.9,
+            "filter": {"require_numbers_supported": True, "max_novel_rate": 0.6, "min_keep_fraction": 0.0}}
+    kept, rep = prepare_pairs(df, scfg, bench)
+    assert list(kept.summary) == [rows[0]["s"]]
+    assert rep["leaked_rows"] == 1 and rep["leaked_protected_ids"] == ["NEWS-1"]
+    assert rep["after_length"] == 4 and rep["after_arabic_ratio"] == 3 and rep["faithfulness"]["dropped_numbers"] == 1
+    assert ngram_overlap([art(5)], bench) == [set()]

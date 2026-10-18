@@ -310,6 +310,20 @@ personal contact details.
     ours re-processed with the current fill (approximation) 0.319 / 0.382; lead 0.370 / 0.430; extractive
     0.352 / 0.415. Pinned `nltk==3.9.1` (requirements/colab-data.txt).
 
+31. **03b style fine-tune on a public dataset (prepared 2026-10-18; not run yet, needs a T4).** The user chose
+    public data over LLM-generated training summaries for now (own dataset in the next project). Open Arabic
+    summarization sets checked (style vs our references: ratio 0.19, ~4 sentences, copy share 0.49):
+    karimraouf/AsDs (2k, 214-word inputs, LLM meta-style), BounharAbdelaziz synthetic (3.5k, mostly WikiHow),
+    Abdelkareem 30k (94-word inputs, 99 % copied), **oddadmix/arabic-news-summarization** (17.9k Arabic machine
+    translation of CNN/DailyMail; 458-word inputs, ~4-sentence highlights, ratio 0.11, numbers_ok 0.83; no
+    license stated: research use, deviation to report). Only the last fits; none overlaps the 330 benchmark/dev
+    texts (8-gram check). Filter (`train.external.prepare_pairs`, same faithfulness rule as XL-Sum train):
+    17,862 → 9,037 pairs. `notebooks/03b_style_finetune.ipynb` continues `arabart_ft` (lr 3e-5, ≤ 3 epochs,
+    patience 1), selects the epoch on dev ROUGE-1, exports `models/arabart_ft_style`, and compares old vs new
+    model on the dev set through the pipeline (segmentwise / direct, strict + XL-Sum-style ROUGE).
+    Expected effect (estimate, not measured): +0.01–0.03 R1; only if the dev result beats the current model does
+    it go through 04 and 05.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

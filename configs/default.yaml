@@ -173,6 +173,28 @@ finetune:
     per_device_batch_size: 2  # x8 accumulation = 16; batch 4 in fp32 ran out of the T4's 15 GB (2026-10-17)
     eval_batch_size: 8
     gradient_checkpointing: true
+  style:                      # 03b: continue arabart_ft on multi-sentence summaries (PROGRESS 31)
+    dataset:
+      repo_id: oddadmix/arabic-news-summarization
+      revision: fa8b5a62fb04e23ca757aca1bd143f71b2482084
+      file: data/train-00000-of-00001.parquet
+      text_col: origin_text_translated
+      summary_col: summary_text_translated
+      license: "not stated on the Hub; Arabic machine translation of CNN/DailyMail (research use)"
+    min_source_words: 150
+    max_source_words: 1100
+    min_summary_words: 15
+    min_arabic_ratio: 0.9
+    filter:                   # same faithfulness filter as XL-Sum train (dry run: 17,862 -> 9,037 pairs, 0 leaked)
+      require_numbers_supported: true
+      max_novel_rate: 0.35
+      min_keep_fraction: 0.5
+    base_model: arabart_ft    # continue from the 03 model (models.<key>.local_path)
+    learning_rate: 3.0e-5
+    max_epochs: 3
+    patience: 1
+    run_tag: s1
+    export_name: arabart_ft_style
   select:
     primary: rouge1
     faith_key: number_precision
@@ -225,6 +247,11 @@ models:
     local_path: models/arabart_ft
     base: arabart
     license: "Apache-2.0 base; fine-tuned on XL-Sum (CC BY-NC-SA 4.0)"
+    role: fine-tuned
+  arabart_ft_style:           # produced by 03b_style_finetune (PROGRESS 31)
+    local_path: models/arabart_ft_style
+    base: arabart
+    license: "Apache-2.0 base; XL-Sum (CC BY-NC-SA 4.0) + oddadmix/arabic-news-summarization (no license stated)"
     role: fine-tuned
   arabart:
     repo_id: moussaKam/AraBART

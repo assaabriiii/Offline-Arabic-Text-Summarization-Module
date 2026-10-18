@@ -902,7 +902,136 @@ print(label); print(ACC.to_string(index=False))
     return notebook(cells, gpu=True)
 
 
-NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03, "04_optimize.ipynb": nb04, "05_evaluate.ipynb": nb05}
+def nb03b() -> dict:
+    cells = [md('''
+# 03b · Style fine-tune: multi-sentence summaries (needs a T4)
+
+**Why** (PROGRESS 27–29): the 03 model learned XL-Sum's one-sentence BBC teasers. Pipeline tuning on the dev set
+tops out at ROUGE-1 ≈ 0.31; the gap to the references is the model's training target. This notebook continues
+training `models/arabart_ft` on multi-sentence summaries from a public dataset, selects the epoch on the
+**90-text dev set** (never the 240 benchmark texts) and compares old vs new model through the real pipeline.
+
+**What this does** (resumable; every step skips work already on Drive)
+1. Downloads `oddadmix/arabic-news-summarization` at a pinned revision (Arabic machine translation of
+   CNN/DailyMail, ~4-sentence highlights; no license stated on the Hub, research use).
+2. Filters it: Arabic, 150–1100-word articles, summaries ≥ 15 words, every summary number in the article,
+   limited unsupported content, and **no text shared with any benchmark or dev text** (8-gram check).
+3. Continues training `arabart_ft` (lr 3e-5, ≤ 3 epochs, early stopping on dev ROUGE-1).
+4. Exports `models/arabart_ft_style` and scores old vs new model on the dev set (segmentwise and direct, with the
+   configured length fill; strict and XL-Sum-style ROUGE).
+
+**You run:** Runtime → Change runtime type → **T4 GPU**, then cells 0 and 1 (Drive), then the rest. About 2 hours.
+'''), *setup_cells("03b_style", "requirements/colab-data.txt"), code('''
+# ==== 3. GPU + settings ================================================================
+import json, torch, pandas as pd
+from huggingface_hub import hf_hub_download
+from arabic_summ import config as C, models as M
+from arabic_summ.data import benchmark as B, prepare
+from arabic_summ.eval import dev_tune as DT
+from arabic_summ.io_utils import mark_step_done, read_json, sha256_file, step_done, write_json
+from arabic_summ.text.normalize import NormalizationPolicy
+from arabic_summ.train import data as D, external as X, ledger as L, seq2seq as S2S
+assert torch.cuda.is_available(), "No GPU: Runtime > Change runtime type > T4 GPU"
+FT, TR, STY = cfg["finetune"], cfg["finetune"]["train"], cfg["finetune"]["style"]
+SEED = TR["seed"]
+POLICY = NormalizationPolicy.from_dict(cfg["normalization"]["model"])
+BASE_DIR = M.local_path(cfg, STY["base_model"])
+assert (BASE_DIR / "config.json").exists(), f"base model missing: {BASE_DIR} (run 03 first)"
+print(torch.cuda.get_device_name(0), "| base:", BASE_DIR, "| ledger so far:", L.summary(cfg))
+'''), code('''
+# ==== 4. External pairs: download (pinned) + filter + leakage check (cached) ===========
+items = B.read_csv(C.path(cfg, "benchmark") / B.ITEMS_FILE)
+PROTECTED = dict(zip(items.sample_id, items.text))          # all benchmark + dev texts
+ext_path = C.path(cfg, "processed", "style_pairs.parquet")
+ext_rep_path = C.path(cfg, "processed", "style_pairs_report.json")
+if not step_done(cfg, "03b_style_data"):
+    ds = STY["dataset"]
+    f = hf_hub_download(ds["repo_id"], ds["file"], revision=ds["revision"], repo_type="dataset",
+                        local_dir=str(C.path(cfg, "raw", "external", "x").parent))
+    raw = pd.read_parquet(f)
+    kept, rep = X.prepare_pairs(raw, STY, PROTECTED)
+    kept.to_parquet(ext_path)
+    rep.update({"dataset": ds, "file_sha256": sha256_file(f), "filter_config": {k: STY[k] for k in
+                ("min_source_words", "max_source_words", "min_summary_words", "min_arabic_ratio", "filter")}})
+    write_json(ext_rep_path, rep)
+    prepare.update_manifest(cfg, "style_pairs", {**{k: v for k, v in rep.items() if k != "faithfulness"},
+                            "output": str(ext_path), "sha256": sha256_file(ext_path)})
+    mark_step_done(cfg, "03b_style_data", outputs=[ext_path, ext_rep_path])
+STYLE_REP = read_json(ext_rep_path)
+print(json.dumps({k: v for k, v in STYLE_REP.items() if k not in ("faithfulness", "dataset", "filter_config")}, ensure_ascii=False))
+assert STYLE_REP["leaked_rows"] == 0 or not set(STYLE_REP["leaked_protected_ids"]) & set(PROTECTED), "leak check"
+style_df = pd.read_parquet(ext_path)
+print(len(style_df), "training pairs")
+'''), code('''
+# ==== 5. Dev set (90 reserve texts + references) as the per-epoch selection set ========
+DEV_REFS = json.load(open(f"{REPO_DIR}/benchmark_sources/dev_reference_drafts.json", encoding="utf-8"))
+dev = items[items.status == "rejected"].copy()
+assert set(dev.sample_id) == set(DEV_REFS), "dev items and dev references differ"
+dev["summary"] = dev.sample_id.map(lambda i: DEV_REFS[i]["summary"])
+dev = dev.sort_values("sample_id").reset_index(drop=True)
+tok = M.load_tokenizer(str(BASE_DIR))
+tokenize = lambda df: D.tokenize_pairs(df, tok, POLICY, FT["max_source_tokens"], FT["max_target_tokens"])
+eval_rows = tokenize(dev)
+assert eval_rows[0]["labels"][-1] == tok.eos_token_id, "labels must end with EOS"
+print(len(dev), "dev texts | truncated dev sources:", sum(len(r["input_ids"]) >= FT["max_source_tokens"] for r in eval_rows))
+'''), code('''
+# ==== 6. Continue training arabart_ft on the style pairs (resumable) ===================
+train_rows = tokenize(style_df)
+STYLE_NAME = S2S.run_name("arabart_ft_style", STY["learning_rate"], 1.0, STY["run_tag"])
+hp = {**TR, "learning_rate": STY["learning_rate"], "max_epochs": STY["max_epochs"], "patience": STY["patience"],
+      "max_target_tokens": FT["max_target_tokens"]}
+RUN = S2S.train_run(cfg, STYLE_NAME, {"repo_id": str(BASE_DIR)}, tok, train_rows, eval_rows, list(dev.summary),
+                    list(dev.text), hp, notebook="03b_style", extra_meta={"stage": "style", "base": str(BASE_DIR)})
+del train_rows
+display(pd.DataFrame(RUN["per_epoch"])[["epoch", "rouge1", "rouge2", "rougeL", "number_precision", "novel_rate", "gen_words"]].round(4))
+print("best:", {k: RUN["best"][k] for k in ("epoch", "rouge1", "rougeL", "number_precision")})
+'''), code('''
+# ==== 7. Export models/arabart_ft_style (decoding copied from arabart_ft) =============
+from arabic_summ.train.provenance import export_model
+BASE_DEC = M.decoding_for(cfg, STY["base_model"])
+PROV = export_model(cfg, RUN["best_dir"], STY["export_name"], {k: BASE_DEC[k] for k in
+                    ("num_beams", "length_penalty", "no_repeat_ngram_size", "early_stopping") if k in BASE_DEC}, {
+    "base_model": {"key": STY["base_model"], "path": str(BASE_DIR)}, "training_run": RUN,
+    "style_pairs": STYLE_REP, "selection": "per-epoch ROUGE-1 on the 90-text dev set (Haiku-drafted references)",
+    "gpu_ledger": L.summary(cfg)})
+print(PROV["model_name"], PROV["size_mb"], "MB")
+'''), code('''
+# ==== 8. Dev set through the real pipeline: old vs new model ===========================
+from arabic_summ.summarize.pipeline import Summarizer
+cmp_path = C.path(cfg, "logs") / "03b_style" / "dev_comparison.json"
+texts = dict(zip(dev.sample_id, dev.text)); refs = dict(zip(dev.sample_id, dev.summary))
+rows = []
+for key in (STY["base_model"], STY["export_name"]):
+    be = M.load_hf_backend(cfg, key, dtype="float16")
+    sm = Summarizer(cfg, backend=be, decoding=M.decoding_for(cfg, key), tokens_per_word=M.tokens_per_word(cfg, "arabart"))
+    for strat in ("segmentwise", "direct"):
+        res = [sm.summarize(texts[i], strategy=strat) for i in dev.sample_id]
+        rows.append(DT.score_row(key, strat, list(dev.sample_id), [r.summary for r in res], [r.length_ok for r in res],
+                                 [r.filled_words / max(1, r.output_words) for r in res], texts, refs))
+    del be; torch.cuda.empty_cache()
+sm0 = Summarizer(cfg)
+for strat in ("lead", "extractive"):
+    res = [sm0.summarize(texts[i], strategy=strat) for i in dev.sample_id]
+    rows.append(DT.score_row(strat, "-", list(dev.sample_id), [r.summary for r in res], [r.length_ok for r in res],
+                             [0] * len(res), texts, refs))
+write_json(cmp_path, rows)
+CMP = pd.DataFrame(rows)
+display(CMP.sort_values("rouge1", ascending=False))
+'''), code('''
+# ==== 9. Summary (paste this output back) =============================================
+print("pairs  :", {k: STYLE_REP[k] for k in ("rows_in", "after_length", "after_arabic_ratio", "leaked_rows", "rows_kept")})
+print("train  :", STYLE_NAME, "| epochs", RUN["epochs_run"], "| best", {k: round(RUN["best"][k], 4) for k in ("rouge1", "number_precision")})
+print(CMP[["run", "post", "rouge1", "rouge1_xlsum", "length_ok", "filled_share", "numbers_ok", "novel_rate"]].to_string(index=False))
+print("ledger :", L.summary(cfg))
+'''), code('''
+# ==== 10. Wait until everything has reached Drive (run before closing the tab) =========
+drive.flush_and_unmount()
+print("all files uploaded to Drive; rerun cell 1 to keep working")
+''')]
+    return notebook(cells, gpu=True)
+
+
+NOTEBOOKS = {"01_data.ipynb": nb01, "02_preprocess.ipynb": nb02, "03_finetune.ipynb": nb03, "03b_style_finetune.ipynb": nb03b, "04_optimize.ipynb": nb04, "05_evaluate.ipynb": nb05}
 
 
 def main() -> None:
