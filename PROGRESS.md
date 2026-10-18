@@ -297,6 +297,19 @@ personal contact details.
     - Gemma 3 1B Q4_K_M zero-shot, for reference (20 benchmark texts, same 2 vCPUs, diagnostic): R1 0.318 vs ours
       0.306 on the same texts, length ok 0.45, numbers ok 0.85, median 91.5 s (ours 6.8 s), 1.3 GB RSS. Not viable.
 
+30. **Secondary ROUGE: XL-Sum-style Snowball stemming (2026-10-18). Needs project-lead approval to count.**
+    The proposal fixes "ROUGE-1 F1 > 0.40" without defining tokenization; decision 17 fixed our primary score as
+    unstemmed. Published Arabic numbers (XL-Sum, model cards) use the XL-Sum authors' multilingual scorer, which
+    stems Arabic with NLTK's Snowball stemmer (`multilingual_rouge_scoring/stemmers.py`). 05 now also reports
+    `rouge*_xlsum` (`evaluate.secondary_rouge_stem: snowball`; words stemmed in their own spelling, then our
+    matching folds applied to the stems; close to, not identical with, that scorer). The acceptance table keeps
+    pass/fail on the unstemmed score and lists the stemmed one as a secondary row with pass left open. Because
+    this is decided after seeing results, any report must show both scores; the stemmed one may replace the
+    strict one as the acceptance metric only if the project lead approves.
+    Measured on the 05 CPU-half outputs (240 texts, interim references): ours as run 0.306 strict / 0.367 xlsum;
+    ours re-processed with the current fill (approximation) 0.319 / 0.382; lead 0.370 / 0.430; extractive
+    0.352 / 0.415. Pinned `nltk==3.9.1` (requirements/colab-data.txt).
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

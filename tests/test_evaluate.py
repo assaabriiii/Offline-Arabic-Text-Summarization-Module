@@ -110,3 +110,28 @@ def test_run_batch_lead_resumable(tmp_path):
         assert r.returncode == 0, r.stderr[-2000:]
     recs = [json.loads(l) for l in out.read_text().splitlines()]
     assert [x["sample_id"] for x in recs] == ["N0", "N1", "N2"] and all(x["length_ok"] for x in recs)
+
+
+def test_snowball_rouge_matches_clitic_forms_and_is_secondary():
+    pytest.importorskip("nltk")
+    from arabic_summ.eval import rouge
+
+    ref, hyp = "المنظمة أعلنت عن الأطفال", "والمنظمة أعلنت للأطفال"
+    strict, stemmed = rouge.score(ref, hyp)["rouge1"], rouge.score(ref, hyp, stem="snowball")["rouge1"]
+    assert strict < stemmed and stemmed > 0.7
+    assert rouge.corpus([ref], [hyp]) == {k: v for k, v in rouge.score(ref, hyp).items()}   # default stays strict
+    with pytest.raises(ValueError):
+        rouge.tokenize(ref, stem="porter")
+
+    refs = pd.DataFrame({"sample_id": ["n1"], "reference_summary": [ref], "review_status": ["pending"],
+                         "reference_source": ["llm_draft"]})
+    outs = pd.DataFrame([{"system": "s", "strategy": "segmentwise", "sample_id": "n1", "domain": "news", "summary": hyp,
+                          "input_words": 450, "output_words": 90, "length_ok": True, "seconds": {"total": 3.0}, "device": "cpu"}])
+    sc = BE.score_outputs(outs, BE.reference_table(refs, False), {"n1": ref}, secondary_stem="snowball")
+    assert sc.rouge1_xlsum.iloc[0] > sc.rouge1.iloc[0]
+    summ = BE.summary_table(sc)
+    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, BE.latency_table(outs), EV["acceptance"])}
+    sec = acc["ROUGE-1 F1, XL-Sum-style Snowball stemming (secondary)"]
+    assert sec["pass"] is None and sec["value"] == summ[summ.subset == "all"].rouge1_xlsum.iloc[0]
+    assert acc["ROUGE-1 F1"]["value"] == summ[summ.subset == "all"].rouge1.iloc[0]          # pass/fail stays on the strict score
+    assert "rouge1_xlsum" not in BE.score_outputs(outs, BE.reference_table(refs, False), {"n1": ref})

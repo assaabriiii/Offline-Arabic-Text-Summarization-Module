@@ -202,6 +202,7 @@ optimize:
 evaluate:
   approved_only: false        # true for the final report: only human-approved references count
   primary_strategy: segmentwise   # fixed before looking at benchmark scores; others are ablations
+  secondary_rouge_stem: snowball  # extra *_xlsum ROUGE columns (XL-Sum-style stemming); primary stays unstemmed (PROGRESS 30)
   ablation_strategies: [direct, hybrid]
   acceptance:                 # proposal acceptance criteria
     min_rouge1: 0.40

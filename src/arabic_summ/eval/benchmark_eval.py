@@ -3,6 +3,9 @@
 References: rows of references.csv with a summary. With `approved_only` only review_status=approved
 rows count (final report); otherwise every drafted reference is used and the report says how many
 were approved, so interim numbers are never presented as final.
+
+ROUGE: the primary score is unstemmed (decision 17); `secondary_stem="snowball"` adds `*_xlsum`
+columns (XL-Sum-style Snowball stemming, decision 30), reported next to it, never instead of it.
 """
 
 from __future__ import annotations
@@ -24,13 +27,17 @@ def reference_table(refs: pd.DataFrame, approved_only: bool) -> pd.DataFrame:
     return r.set_index("sample_id")
 
 
-def score_outputs(outputs: pd.DataFrame, refs: pd.DataFrame, sources: Mapping[str, str]) -> pd.DataFrame:
+def score_outputs(outputs: pd.DataFrame, refs: pd.DataFrame, sources: Mapping[str, str],
+                  secondary_stem: str | None = None) -> pd.DataFrame:
     """Per (system, sample): ROUGE vs reference, fact check vs source, length compliance."""
     rows = []
     for _, o in outputs.iterrows():
         if o.sample_id not in refs.index:
             continue
         sc = rouge.score(refs.at[o.sample_id, "reference_summary"], o.summary)
+        if secondary_stem and secondary_stem != "none":
+            sc.update({f"{k}_xlsum": v for k, v in
+                       rouge.score(refs.at[o.sample_id, "reference_summary"], o.summary, secondary_stem).items()})
         fr = facts.check(o.summary, sources[o.sample_id])
         rows.append({"system": o.system, "strategy": o.strategy, "sample_id": o.sample_id, "domain": o.domain,
                      "input_words": o.input_words, "output_words": o.output_words,
@@ -61,11 +68,15 @@ def summary_table(scored: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
         for name, h in [("all", g), *[(f"domain={d}", x) for d, x in g.groupby("domain")],
                         *[(f"len={b}", x) for b, x in g.groupby(g.input_words.map(length_band))]]:
             m, lo, hi = bootstrap_ci(h.rouge1, seed=seed)
-            rows.append({"system": sys_, "subset": name, "n": len(h), "rouge1": round(m, 4),
-                         "rouge1_ci95": f"{lo:.3f}-{hi:.3f}", "rouge2": round(h.rouge2.mean(), 4),
-                         "rougeL": round(h.rougeL.mean(), 4), "length_ok": round(h.length_ok.mean(), 4),
-                         "ratio_median": round(h.ratio_out.median(), 3), "numbers_ok": round(h.numbers_ok.mean(), 4),
-                         "novel_rate": round(h.novel_rate.mean(), 4)})
+            row = {"system": sys_, "subset": name, "n": len(h), "rouge1": round(m, 4),
+                   "rouge1_ci95": f"{lo:.3f}-{hi:.3f}", "rouge2": round(h.rouge2.mean(), 4),
+                   "rougeL": round(h.rougeL.mean(), 4)}
+            if "rouge1_xlsum" in h:
+                xm, xlo, xhi = bootstrap_ci(h.rouge1_xlsum, seed=seed)
+                row.update({"rouge1_xlsum": round(xm, 4), "rouge1_xlsum_ci95": f"{xlo:.3f}-{xhi:.3f}"})
+            row.update({"length_ok": round(h.length_ok.mean(), 4), "ratio_median": round(h.ratio_out.median(), 3),
+                        "numbers_ok": round(h.numbers_ok.mean(), 4), "novel_rate": round(h.novel_rate.mean(), 4)})
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -89,6 +100,13 @@ def acceptance(system: str, summ: pd.DataFrame, lat: pd.DataFrame, crit: Mapping
     L = lat[lat.system == system].set_index("band") if len(lat) else pd.DataFrame()
     rows = [
         {"criterion": "ROUGE-1 F1", "value": a.rouge1, "target": f"> {crit['min_rouge1']}", "pass": a.rouge1 > crit["min_rouge1"]},
+    ]
+    if "rouge1_xlsum" in a and pd.notna(a.get("rouge1_xlsum")):
+        # secondary only: shown for comparison with published XL-Sum numbers; pass is left open (None)
+        # because switching the acceptance metric needs project-lead approval (decision 30)
+        rows.append({"criterion": "ROUGE-1 F1, XL-Sum-style Snowball stemming (secondary)", "value": a.rouge1_xlsum,
+                     "target": f"> {crit['min_rouge1']} (if approved as the metric)", "pass": None})
+    rows += [
         {"criterion": "ROUGE-2 / ROUGE-L F1", "value": f"{a.rouge2} / {a.rougeL}", "target": "reported", "pass": True},
         {"criterion": "output length 10-30 % and 30-300 words", "value": a.length_ok, "target": "all texts",
          "pass": a.length_ok >= crit["min_length_ok"]},

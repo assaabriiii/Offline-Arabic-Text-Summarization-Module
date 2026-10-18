@@ -49,11 +49,10 @@ def score_variants(cfg: Mapping, runs: Mapping[str, Sequence[Mapping]], texts: M
 def score_row(run: str, variant: str, ids: Sequence[str], hyps: Sequence[str], length_ok: Iterable[bool],
               filled_share: Iterable[float], texts: Mapping[str, str], refs: Mapping[str, str]) -> dict:
     r = [rouge.score(refs[i], h) for i, h in zip(ids, hyps)]
-    stem = [rouge.rouge_n([facts.stem(t) for t in rouge.tokenize(refs[i])], [facts.stem(t) for t in rouge.tokenize(h)], 1)
-            for i, h in zip(ids, hyps)]
+    xl = [rouge.score(refs[i], h, stem="snowball")["rouge1"] for i, h in zip(ids, hyps)]
     f = facts.aggregate(facts.check(h, texts[i]) for i, h in zip(ids, hyps))
     return {"run": run, "post": variant, "n": len(ids),
             "rouge1": round(st.mean(x["rouge1"] for x in r), 4), "rouge2": round(st.mean(x["rouge2"] for x in r), 4),
-            "rougeL": round(st.mean(x["rougeL"] for x in r), 4), "rouge1_stemmed": round(st.mean(stem), 4),
+            "rougeL": round(st.mean(x["rougeL"] for x in r), 4), "rouge1_xlsum": round(st.mean(xl), 4),
             "length_ok": round(st.mean(length_ok), 3), "filled_share": round(st.mean(filled_share), 3),
             "numbers_ok": round(f["numbers_ok_share"], 3), "novel_rate": round(f["novel_rate"], 3)}

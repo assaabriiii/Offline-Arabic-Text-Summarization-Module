@@ -794,7 +794,8 @@ OUTPUTS = pd.concat([pd.read_json(OUT / f"{n}.jsonl", lines=True) for n in done]
 print(OUTPUTS.groupby("system").size().to_dict() if len(OUTPUTS) else "no outputs yet")
 '''), code('''
 # ==== 6. Automatic metrics: ROUGE (95 % CI), length, fact check, latency ===============
-SCORED = BE.score_outputs(OUTPUTS, R, SOURCES)
+# rouge*: primary, unstemmed (decision 17). rouge*_xlsum: secondary, XL-Sum-style Snowball stemming (decision 30).
+SCORED = BE.score_outputs(OUTPUTS, R, SOURCES, secondary_stem=EV.get("secondary_rouge_stem"))
 SUMM = BE.summary_table(SCORED, seed=SEED)
 LAT = BE.latency_table(OUTPUTS)
 SCORED.to_csv(REP / "scored.csv", index=False, encoding="utf-8-sig")
