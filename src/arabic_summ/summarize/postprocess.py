@@ -29,6 +29,11 @@ def drop_unfinished(text: str) -> str:
     return m.group(1).strip() if m else text
 
 
+def is_complete(sentence: str) -> bool:
+    """True if the sentence ends in sentence-final punctuation (not a heading or a cut-off fragment)."""
+    return bool(_SENTENCE_END.search(sentence.strip()))
+
+
 def covered(sentence: str, kept: Sequence[str], threshold: float = 0.7) -> bool:
     """True if most words of `sentence` already occur in one of `kept` (same measure as dedup)."""
     toks = _tokset(sentence)

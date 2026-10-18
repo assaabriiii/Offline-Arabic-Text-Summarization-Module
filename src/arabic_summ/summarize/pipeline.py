@@ -15,7 +15,9 @@ partial summary, split them into sentences, drop near-duplicate sentences across
 document order, trim to the upper length bound at a sentence boundary, optionally re-summarize
 abstractively (`merge: abstractive`). A model summary still below its goal (`length_control.fill_to`)
 is topped up with the best-ranked source sentences it doesn't cover (`length_control.fill`), so
-the length rule holds even when the model writes too little.
+the length rule holds even when the model writes too little. Before that, model sentences that fail
+the faithfulness checks (`faithfulness`, see `faithful.py`) are dropped, so the fill replaces them with
+source sentences.
 """
 
 from __future__ import annotations
@@ -30,8 +32,9 @@ from ..text.normalize import NormalizationPolicy, normalize
 from ..text.segment import Sentence, split_sentences
 from ..text.words import count_words
 from . import extractive
+from .faithful import filter_sentences
 from .length import LengthPolicy, allocate, token_bounds
-from .postprocess import covered, dedup_sentences, drop_unfinished, join, to_sentences, trim_to_words
+from .postprocess import covered, dedup_sentences, drop_unfinished, is_complete, join, to_sentences, trim_to_words
 
 STRATEGIES = ("direct", "segmentwise", "hybrid", "extractive", "lead")
 
@@ -49,6 +52,7 @@ class SummaryResult:
     n_parts: int
     n_model_calls: int
     filled_words: int = 0          # words added from the source by the length fill
+    rejected: list = field(default_factory=list)   # model sentences dropped by the faithfulness filter
     seconds: dict = field(default_factory=dict)
     parts: list = field(default_factory=list)
 
@@ -73,6 +77,10 @@ class Summarizer:
         self.fill, self.fill_to = lc.get("fill", "none"), lc.get("fill_to", "lo")
         if self.fill not in ("none", "extractive") or self.fill_to not in ("lo", "target"):
             raise ValueError("length_control.fill must be none|extractive and fill_to lo|target")
+        self.fill_cover = float(lc.get("fill_cover_threshold", p["dedup_sentence_threshold"]))
+        self.fill_skip_titles = bool(lc.get("fill_skip_titles", False))
+        self.fill_number_bonus = float(lc.get("fill_number_bonus", 0.0))
+        self.faith = dict(p.get("faithfulness") or {})
 
     # ------------------------------------------------------------------ public
     def summarize(self, text: str, ratio: float | None = None, strategy: str | None = None) -> SummaryResult:
@@ -105,6 +113,7 @@ class Summarizer:
                      for (u, t), o in zip(units, outs)]          # raw model outputs
             sentences_out, merge_calls = self._aggregate(outs, target, merge=len(units) > 1)
             calls += merge_calls
+        sentences_out, rejected = self._check(sentences_out, sents, strategy)
         t2 = time.perf_counter()
 
         final, filled = self._finish(sentences_out, sents, strategy, target, lo, hi)
@@ -114,7 +123,7 @@ class Summarizer:
         return SummaryResult(
             summary=summary, strategy=strategy, ratio=ratio, input_words=n_in, target_words=target,
             bounds=(lo, hi), output_words=n_out, length_ok=lo <= n_out <= hi,
-            n_parts=max(1, len(parts)), n_model_calls=calls, filled_words=filled,
+            n_parts=max(1, len(parts)), n_model_calls=calls, filled_words=filled, rejected=rejected,
             seconds={"preprocess": round(t1 - t0, 4), "generate": round(t2 - t1, 4),
                      "postprocess": round(t3 - t2, 4), "total": round(t3 - t0, 4)},
             parts=parts,
@@ -122,7 +131,7 @@ class Summarizer:
 
     def refinish(self, text: str, outputs: Sequence[str], ratio: float | None = None,
                  strategy: str | None = None) -> SummaryResult:
-        """Re-run only the post-processing (unfinished-fragment drop, dedup, trim, length fill) on
+        """Re-run only the post-processing (unfinished-fragment drop, dedup, faithfulness filter, trim, length fill) on
         stored raw model outputs (`parts[i]["output"]` of an earlier run), so post-processing settings
         can be compared on a dev set without regenerating. No abstractive merge (needs the model)."""
         strategy = strategy or self.p["strategy"]
@@ -133,12 +142,13 @@ class Summarizer:
         target = self.policy.target_words(n_in, ratio)
         lo, hi = self.policy.bounds(n_in, ratio, self.p["length_tolerance"])
         sentences_out, _ = self._aggregate(list(outputs), target, merge=False)
+        sentences_out, rejected = self._check(sentences_out, sents, strategy)
         final, filled = self._finish(sentences_out, sents, strategy, target, lo, hi)
         summary = join(final)
         n_out = count_words(summary)
         return SummaryResult(summary=summary, strategy=strategy, ratio=ratio, input_words=n_in, target_words=target,
                              bounds=(lo, hi), output_words=n_out, length_ok=lo <= n_out <= hi,
-                             n_parts=max(1, len(outputs)), n_model_calls=0, filled_words=filled)
+                             n_parts=max(1, len(outputs)), n_model_calls=0, filled_words=filled, rejected=rejected)
 
     # ------------------------------------------------------------------ internals
     def _aggregate(self, outs: Sequence[str], target: int, merge: bool) -> tuple[list[str], int]:
@@ -152,6 +162,12 @@ class Summarizer:
             merged = self.backend.generate([GenerationRequest(join(sentences_out), mn, mx)], self.decoding)[0]
             return dedup_sentences(to_sentences([merged]), self.p["dedup_sentence_threshold"]), 1
         return sentences_out, 0
+
+    def _check(self, sentences_out: Sequence[str], sents: Sequence[Sentence], strategy: str) -> tuple[list[str], list[dict]]:
+        """Faithfulness filter of model sentences (model strategies only). Returns (kept, rejected)."""
+        if strategy not in ("direct", "segmentwise", "hybrid") or not self.faith.get("enabled", False):
+            return list(sentences_out), []
+        return filter_sentences(sentences_out, [s.text for s in sents], self.faith)
 
     def _finish(self, sentences_out: Sequence[str], sents: Sequence[Sentence], strategy: str, target: int,
                 lo: int, hi: int) -> tuple[list[str], int]:
@@ -195,26 +211,34 @@ class Summarizer:
     def _fill(self, summary: Sequence[str], sents: Sequence[Sentence], goal: int, hi: int) -> tuple[list[str], int]:
         """Top up a too-short model summary with the best-ranked (TextRank) source sentences it doesn't
         already cover, never past `hi` (05, 2026-10-18: all 32 length failures were too short and
-        nothing could add words). If no whole sentence fits, the first words of the best uncovered
-        one are added, as `trim_to_words` does. Returns (sentences, words added)."""
+        nothing could add words). Optionally sentences with numbers rank higher (`fill_number_bonus`)
+        and headings without end punctuation are skipped (`fill_skip_titles`; 05 review: page titles
+        glued on). If no whole sentence fits, the first words of the best uncovered one are added, as
+        `trim_to_words` does. Returns (sentences, words added)."""
         out = list(summary)
         n0 = n = count_words(join(out))
         goal = min(goal, hi)
         if n >= goal or not sents:
             return out, 0
-        thr = self.p["dedup_sentence_threshold"]
+        thr = self.fill_cover
         texts = [s.text for s in sents]
         scores = extractive.textrank_scores(texts, position_weight=self.p["hybrid"]["position_weight"])
+        if self.fill_number_bonus:
+            scores = scores * [1 + self.fill_number_bonus * any(ch.isdigit() for ch in t) for t in texts]
         order = sorted(range(len(texts)), key=lambda i: -scores[i])
         for i in order:
             if n >= goal:
                 break
+            if self.fill_skip_titles and not is_complete(texts[i]):
+                continue
             w = count_words(texts[i])
             if n + w <= hi and not covered(texts[i], out, thr):
                 out.append(texts[i])
                 n += w
         if n < goal:
             rest = [texts[i] for i in order if not covered(texts[i], out, thr)]
+            if self.fill_skip_titles:
+                rest = [t for t in rest if is_complete(t)] or rest
             if rest:
                 out = trim_to_words(out + rest[:1], hi, goal)
         return out, count_words(join(out)) - n0

@@ -260,3 +260,15 @@ def test_dev_tune_scores_every_post_variant_from_stored_parts():
     assert set(by) == set(POST_VARIANTS) and all(r["n"] == 3 for r in rows)
     assert by["as_before"]["length_ok"] < 1 and by["fill_lo"]["length_ok"] == 1 and by["fill_target"]["length_ok"] == 1
     assert by["as_before"]["filled_share"] == 0 < by["fill_lo"]["filled_share"] <= by["fill_target"]["filled_share"]
+
+
+def test_dev_tune_faith_variants_report_rejections():
+    from arabic_summ.eval.dev_tune import FAITH_VARIANTS, score_variants
+
+    sm = Summarizer(_cfg(fill="none"), backend=_TerseBackend(cut=True))
+    texts = {f"D{k}": doc(40, 15, seed=30 + k) for k in range(2)}
+    recs = [{**sm.summarize(t, strategy="segmentwise").to_dict(), "sample_id": sid} for sid, t in texts.items()]
+    refs = {sid: " ".join(t.split()[:120]) for sid, t in texts.items()}
+    rows = score_variants(CFG, {"seg": recs}, texts, refs, FAITH_VARIANTS)
+    assert {r["post"] for r in rows} == set(FAITH_VARIANTS) and all("rejected_per_text" in r for r in rows)
+    assert next(r for r in rows if r["post"] == "no_filter")["rejected_per_text"] == 0

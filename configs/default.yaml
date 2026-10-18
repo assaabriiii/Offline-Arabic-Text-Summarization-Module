@@ -128,6 +128,20 @@ pipeline:
     drop_unfinished: true    # cut a trailing fragment the token limit left in a model output
     fill: extractive         # none | extractive: top up a short model summary with uncovered source sentences
     fill_to: target          # lo (length rule only) | target: dev set 2026-10-18 (PROGRESS 29): R1 0.292 -> 0.307
+    # dev set 2026-10-19 (PROGRESS 36), with the faithfulness filter: R1 0.367 -> 0.380
+    fill_cover_threshold: 0.5  # a fill sentence is skipped if this share of its words is already in one summary sentence
+    fill_skip_titles: true   # skip source lines without end punctuation (page titles) in the fill
+    fill_number_bonus: 0.3   # TextRank score x (1 + bonus) for source sentences with a number
+  faithfulness:              # drop unfaithful model sentences, the fill replaces them (PROGRESS 35-36; summarize/faithful.py)
+    enabled: true
+    min_support: 0.8         # share of the claim's content stems found in its best support sentences
+    max_support_sentences: 1 # 1: no fusing of facts from different source sentences (dev review: most errors)
+    number_context: 0.4      # a number must occur in a source sentence sharing this share of the claim's stems
+    negation: true
+    quotes: 0.7              # share of a quoted span's word bigrams found in the source
+    attribution: 0.5         # share of the speaker's words found near the claim's support sentences
+    attribution_window: 2    # support sentence and the 2 before it
+    attribution_single_source: true    # an attributed claim must come from one source sentence
   dedup_sentence_threshold: 0.7
   merge: none                # none | abstractive  (final abstractive re-summarization pass)
 

@@ -414,6 +414,40 @@ personal contact details.
       a number/name used in a different sentence context, fill instead); skip unpunctuated title lines and covered
       sentences at a lower threshold in the fill; strip date/salutation lines in org preprocessing.
 
+36. **Faithfulness filter + fill changes, tuned on the dev set (2026-10-19).** `summarize/faithful.py` checks each
+    model sentence against the source sentences: content support, number context, negation, quotes, speaker
+    attribution (module docstring). A rejected sentence is dropped and the fill replaces it with source sentences.
+    The fill now skips heading lines and sentences already 50 % covered, and ranks sentences with numbers higher
+    (×1.3). Dev raw outputs: deployed model (torch INT8, direct) on the 90 dev texts with `keep_parts`
+    (`logs/dev_runs/dev_cpu_torch_int8_direct.jsonl`, Colab CPU). Variants re-applied locally with
+    `dev_tune.FAITH_VARIANTS`; the benchmark was not used for any choice.
+    | post-processing (dev, 90 texts) | R1 | R1 xlsum | R2 | length ok | fill share | numbers ok | rejected / text |
+    |---|---|---|---|---|---|---|---|
+    | before (decision 34 config) | 0.367 | 0.422 | 0.188 | 1.000 | 0.183 | 0.989 | 0 |
+    | filter (support from ≤ 2 source sentences) | 0.367 | 0.423 | 0.189 | 1.000 | 0.305 | 1.000 | 0.88 |
+    | + fill changes, number bonus 0.3 | 0.375 | 0.432 | 0.196 | 1.000 | 0.304 | 1.000 | 0.88 |
+    | + attributed claim from one sentence | 0.377 | 0.434 | 0.197 | 1.000 | 0.319 | 1.000 | 0.98 |
+    | **+ every claim from one source sentence (selected)** | **0.380** | **0.436** | 0.197 | 1.000 | 0.432 | 1.000 | 1.77 |
+    | drop every model sentence (all extractive) | 0.352 | 0.411 | 0.182 | 1.000 | 1.000 | 1.000 | 5.2 |
+    Number bonus 0.6 / 1.0 and fill cover 0.5 alone: within ±0.003. Both domains improve (news 0.369 → 0.374,
+    org 0.366 → 0.375, with the 2-sentence-support filter).
+    **Hand review on dev** (model sentences that aren't ≥ 85 % copies of one source sentence: 193 of 468):
+    - 2-sentence-support filter: ~9 of 15 sampled rejected sentences were really wrong. 7 of 20 kept were still
+      wrong, mostly facts fused from two source sentences under one actor ("109 million fell ill" → "died";
+      al-Zahar's pledge → John Kerry; UNICEF's delivery → KSrelief).
+    - Selected (one-sentence support): 39 non-copy sentences kept; 3 of 20 sampled wrong (wrong governor/minister
+      title from a fused page title, "violence against women" → "sexual violence", KSrelief/UNICEF role).
+      Near-copies (≥ 85 %) that drop ≥ 3 source words: 1 of 15 wrong (garbled Obama/Sarkozy quote).
+    - Rough estimate for the 90 dev summaries: ~95 wrong model sentences before → ~15 after (−80–85 %); small
+      samples, single reviewer (Claude), so the human evaluation remains the measure. What still gets through:
+      changed roles of correctly named actors, garbled near-copies, dropped qualifiers.
+    - Cost: summaries are more extractive (43 % of words from the fill, model-rewritten sentences ~8 % of model
+      sentences). The model's selection and compression still help: all-extractive scores 0.352.
+    Config: `faithfulness.enabled: true`, `max_support_sentences: 1`, `min_support: 0.8`,
+    `attribution_single_source: true`; `fill_cover_threshold: 0.5`, `fill_skip_titles: true`, `fill_number_bonus: 0.3`.
+    Next: re-run the CPU primary of 05 on the 240 texts (old outputs and the unused human-eval sheets moved to
+    `archive_decision34/`), new human-eval sheets. The GPU ablations (`ft_style_*`) keep the decision-34 post-processing.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

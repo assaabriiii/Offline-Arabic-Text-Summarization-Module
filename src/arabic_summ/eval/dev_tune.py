@@ -21,10 +21,36 @@ POST_VARIANTS = {
     "fill_lo": {"drop_unfinished": True, "fill": "extractive", "fill_to": "lo"},
     "fill_target": {"drop_unfinished": True, "fill": "extractive", "fill_to": "target"},
 }
+# faithfulness filter + fill options (PROGRESS 36); on top of the fill_target post-processing
+_FT = POST_VARIANTS["fill_target"]
+_ON = {"enabled": True}
+FAITH_VARIANTS = {
+    "no_filter": {**_FT, "faithfulness": {"enabled": False}},
+    "filter": {**_FT, "faithfulness": _ON},
+    "filter_s0.7": {**_FT, "faithfulness": {**_ON, "min_support": 0.7}},
+    "filter_s0.9": {**_FT, "faithfulness": {**_ON, "min_support": 0.9}},
+    "filter_no_attr": {**_FT, "faithfulness": {**_ON, "attribution": None}},
+    "filter+fill": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "faithfulness": _ON},
+    "filter+fill+num0.3": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.3,
+                           "faithfulness": _ON},
+    "filter+fill+num0.3+single": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True,
+                                  "fill_number_bonus": 0.3,
+                                  "faithfulness": {**_ON, "attribution_single_source": True}},
+    "filter+fill+num0.3+single+support1": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True,
+                                           "fill_number_bonus": 0.3,
+                                           "faithfulness": {**_ON, "attribution_single_source": True,
+                                                            "max_support_sentences": 1}},
+    "filter+fill+num0.6": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.6,
+                           "faithfulness": _ON},
+}
 
 
 def _with_length_control(cfg: Mapping, lc: Mapping) -> dict:
+    """Variant = length_control keys, plus an optional `faithfulness` dict merged into that section."""
+    lc = dict(lc)
     p = dict(cfg["pipeline"])
+    if "faithfulness" in lc:
+        p["faithfulness"] = {**p.get("faithfulness", {}), **lc.pop("faithfulness")}
     p["length_control"] = {**p["length_control"], **lc}
     return {**cfg, "pipeline": p}
 
@@ -40,9 +66,11 @@ def score_variants(cfg: Mapping, runs: Mapping[str, Sequence[Mapping]], texts: M
             sm = Summarizer(_with_length_control(cfg, lc))
             outs = [sm.refinish(texts[r["sample_id"]], [p["output"] for p in r["parts"]], r["ratio"], r["strategy"])
                     for r in recs]
-            rows.append(score_row(run, vname, [r["sample_id"] for r in recs], [o.summary for o in outs],
-                                  [o.length_ok for o in outs], [o.filled_words / max(1, o.output_words) for o in outs],
-                                  texts, refs))
+            row = score_row(run, vname, [r["sample_id"] for r in recs], [o.summary for o in outs],
+                            [o.length_ok for o in outs], [o.filled_words / max(1, o.output_words) for o in outs],
+                            texts, refs)
+            row["rejected_per_text"] = round(st.mean(len(o.rejected) for o in outs), 3)
+            rows.append(row)
     return rows
 
 
