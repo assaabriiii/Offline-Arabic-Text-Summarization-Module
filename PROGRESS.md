@@ -11,7 +11,9 @@ personal contact details.
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **done (2026-10-18)**: `models/arabart_ft` exported (534.6 MB), validation ROUGE-1 0.284 (greedy, 500 articles), 0.303 with the selected 4-beam decoding (300 other articles), number precision 0.96–1.00 (decision 24). AraT5v2 comparison not run yet (optional, off by default) |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **in progress**: CPU systems done (2026-10-18, interim references): primary R1 **0.306** vs lead 0.370 (decision 26); baseline + fine-tuned GPU systems still to run on a T4 |
+| 3b | `03b_style_finetune.ipynb`: continue `arabart_ft` on filtered oddadmix pairs | **done (2026-10-18)**: `models/arabart_ft_style`, dev R1 0.360 (decision 32) |
+| 4b | 04 for the style model | **done (2026-10-19)**: torch INT8 → `models/arabart_ft_style_cpu`, 531 MB, median 12.8 s on 2 vCPUs (decision 34) |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` R1 **0.376** strict / 0.436 XL-Sum-style, all other automatic criteria pass (decision 34). Manual review found unfaithful rewritten sentences (decision 35). Human evaluation pending (sheets on Drive) |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -388,6 +390,30 @@ personal contact details.
     Blind human-evaluation sheets written for the primary (100 items, 50 per domain, 20 calibration):
     `logs/05_evaluate/human_eval/` (rater_A/B, rater_REF_calibration; key.csv hidden). Report: `logs/05_evaluate/report.md`.
 
+35. **Manual review of the primary's outputs (2026-10-19, `cpu_torch_int8_direct`, 240 benchmark texts).**
+    Each summary sentence was matched to its closest source sentence (word overlap). Share of summary words:
+    verbatim copy 11 %, shortened copy 34 %, lightly edited 22 %, rewritten/fused (< 60 % overlap with any one
+    source sentence) 14 %, extractive length fill 19 %. Model sentences come from across the article (median position
+    0.20; half from the first 20 %); the first summary sentence is the first source sentence in 78/240 texts.
+    The primary beats lead on 123/240 texts (mean +0.007 R1). No near-duplicate sentence pairs inside any summary.
+    2.5 numbers per summary vs 4.5 in the references.
+    - **Main risk: unfaithful rewritten sentences.** 14 randomly sampled rewritten/fused sentences: 6 correct,
+      8 with an error. Examples: NEWS-0002 "they are not Americans" → "the dead are Americans"; ORG-0065 vaccinated
+      "140 thousand children" → "500,000–600,000 people" (the number of people sheltering); NEWS-0086 a 1–0 win →
+      "1–1 draw in the first half"; NEWS-0101 "less than a third of 15 thousand returned" → "about 15 thousand
+      returned"; NEWS-0096 "since the coronavirus spread in 2015"; quotes attributed to the wrong person (ORG-0023,
+      NEWS-0116, NEWS-0101). Rewritten sentences occur in 129/240 summaries, so the human criterion "≥ 80 % with no
+      critical factual error" is at risk. `numbers_ok` (0.996) misses these: it only checks that each number appears
+      in the source, not that it is used correctly. 24 % of model sentences open with a speech verb ("يقول/تقول X إن"),
+      the style of the training data, and wrong attribution comes mostly from these sentences.
+    - **Length fill:** 47 of 247 fill sentences repeat ≥ 50 % of a model sentence (e.g. ORG-0115, ORG-0160), and
+      18 are page titles/headings without end punctuation (org reports: title line + " – اليونيسف"), which is
+      why 19 summaries don't end in punctuation. Org pages with salutations / lists of names (ORG-0172, a speech)
+      get copied boilerplate.
+    - Possible fixes (not run): a per-sentence faithfulness filter (drop model sentences with low source support or
+      a number/name used in a different sentence context, fill instead); skip unpunctuated title lines and covered
+      sentences at a lower threshold in the fill; strip date/salutation lines in org preprocessing.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
@@ -436,10 +462,11 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
   pulling (commit 093fb97).
 
 ## Next
-- Upload `reference_drafts.json` to `DRIVE_ROOT/data/benchmark/`, run 01_data cells 8b + 9.
-- Team (parallel): human review of all 240 drafts per guideline §1a/§6, then `benchmark-validate --strict`.
-- Run `03_finetune.ipynb` on a T4 (resumable; paste back cell 13 output).
-- Then `04_optimize.ipynb` on a CPU runtime (can be dry-run on the public baseline now).
-- Then `05_evaluate.ipynb` (T4); human raters fill the sheets it writes.
-- Docs done: `README.md` (install-and-run guide), `docs/architecture.md`, `docs/README.fa.md` (Persian summary).
-- Remaining: run 03 → 04 → 05 in Colab; human review of references and the human evaluation; `bench/` on the 8-core machine.
+- 03 → 03b → 04 → 05 have all run (decisions 24–34). Docs: `README.md`, `docs/architecture.md`, `docs/README.fa.md`.
+- Team: human review of all 240 reference drafts (guideline §1a/§6), then `benchmark-validate --strict`,
+  `approved_only: true`, re-run 05 for final (non-interim) numbers.
+- Two raters fill `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
+- Project lead: approve or reject the XL-Sum-style ROUGE (decision 30), AI-drafted references, oddadmix (no
+  license, research use), the extractive length fill (~18 % of words).
+- Optional before human evaluation: a sentence-level faithfulness filter (decision 35).
+- `bench/` on the 8-core reference machine (official latency; torch vs ONNX INT8).
