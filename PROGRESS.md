@@ -343,6 +343,24 @@ personal contact details.
       human evaluation and stated in the report. Dev references are Haiku-drafted, benchmark references
       Opus-drafted: the benchmark number may differ.
 
+33. **05, GPU half with the style model (Colab T4, fp32, 2026-10-18; INTERIM: 240 model-drafted references, none
+    human-approved).** Code 9d1059b.
+    | system | R1 (95 % CI) | R1 xlsum (95 % CI) | R2 | RL | length ok | ratio | numbers ok | novel rate |
+    |---|---|---|---|---|---|---|---|---|
+    | **ft_style_direct (primary model)** | **0.377** (0.367–0.387) | **0.437** (0.427–0.447) | 0.194 | 0.251 | 1.000 | 0.220 | 0.992 | 0.020 |
+    | lead | 0.370 (0.359–0.380) | 0.430 (0.420–0.441) | 0.196 | 0.253 | 1.000 | 0.216 | 1.000 | 0 |
+    | ft_style_segmentwise | 0.369 (0.360–0.378) | 0.432 (0.423–0.441) | 0.187 | 0.250 | 1.000 | 0.218 | 0.996 | 0.017 |
+    | ft_style_hybrid | 0.361 (0.350–0.371) | 0.423 (0.413–0.432) | 0.177 | 0.238 | 1.000 | 0.216 | 0.992 | 0.018 |
+    | extractive | 0.352 (0.343–0.361) | 0.415 (0.405–0.424) | 0.176 | 0.243 | 1.000 | 0.217 | 1.000 | 0 |
+    | baseline_direct (Omar10lfc) | 0.317 (0.309–0.326) | 0.376 (0.367–0.384) | 0.138 | 0.191 | 1.000 | 0.220 | 0.888 | 0.148 |
+    Paired vs the public baseline: ft_style_direct +0.060 R1 (95 % CI +0.051..+0.070), segmentwise +0.052,
+    hybrid +0.044. vs the 03 model on CPU (decision 26): 0.306 → 0.377 strict, 0.367 → 0.437 XL-Sum-style.
+    - Strict R1 0.377 < 0.40; XL-Sum-style R1 0.437 > 0.40 with the whole CI above it. Whether the criterion is met
+      depends on the project lead accepting the stemmed score (decision 30). Length compliance 1.00 and numbers_ok
+      0.99 meet their targets. The dev-set ranking (direct > segmentwise > hybrid) held on the benchmark.
+    - Still open: 04 for the style model (INT8, latency, ≤ 0.02 R1 drop), the CPU half of 05 (deployed variant),
+      BERTScore, human evaluation (fluency/coherence of a mostly-extractive output), reference review.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
