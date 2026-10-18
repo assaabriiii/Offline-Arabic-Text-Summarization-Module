@@ -11,7 +11,7 @@ personal contact details.
 | 2 | `02_preprocess.ipynb`: sentence split, chunking, length policy, pipeline (5 strategies), tokenizer calibration | **done**, run 2026-10-15 on T4 |
 | 3 | `03_finetune.ipynb`: faithfulness filter, fact checker, LR grid, final run, AraT5v2 run, decoding tuning, export + provenance, GPU ledger | **done (2026-10-18)**: `models/arabart_ft` exported (534.6 MB), validation ROUGE-1 0.284 (greedy, 500 articles), 0.303 with the selected 4-beam decoding (300 other articles), number precision 0.96–1.00 (decision 24). AraT5v2 comparison not run yet (optional, off by default) |
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **built**; runs after 03/04 (lead/extractive work now) |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **in progress**: CPU systems done (2026-10-18, interim references): primary R1 **0.306** vs lead 0.370 (decision 26); baseline + fine-tuned GPU systems still to run on a T4 |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -220,6 +220,26 @@ personal contact details.
     Fixes found while running 04: the ONNX venv is now isolated and built with uv (Colab's Python has no
     ensurepip; the system diffusers broke optimum), and tokenizer files written by transformers 5
     (`extra_special_tokens` as a list) now load under transformers 4.57.
+
+26. **05, CPU half (Colab CPU, 2 vCPU, 2026-10-18; INTERIM: 240 model-drafted references, none human-approved yet).**
+    | system | ROUGE-1 (95 % CI) | R2 | RL | length ok | median length ratio | numbers ok | novel rate | median s, 300–700 / all |
+    |---|---|---|---|---|---|---|---|---|
+    | lead | **0.370** (0.359–0.380) | 0.196 | 0.253 | 1.000 | 0.216 | 1.000 | 0 | 0.005 / 0.006 |
+    | extractive | 0.352 (0.343–0.361) | 0.176 | 0.243 | 1.000 | 0.217 | 1.000 | 0 | 0.014 / 0.017 |
+    | cpu ONNX INT8, segmentwise | 0.308 (0.300–0.317) | 0.127 | 0.207 | 0.846 | 0.176 | 0.979 | 0.171 | 13.0 / 15.4 |
+    | **cpu torch INT8, segmentwise (primary)** | 0.306 (0.298–0.314) | 0.123 | 0.204 | **0.867** | 0.177 | 0.975 | 0.182 | **8.6 / 10.9** |
+    Primary by domain: news 0.299, org_report 0.313; by length 300–499 0.318, 500–699 0.306, 700–1000 0.294.
+    Findings:
+    - The fine-tuned model in the pre-registered `segmentwise` strategy is **below lead and extractive** on
+      these references (−0.064 R1 vs lead) and far from 0.40. The references (model-drafted, close to the source
+      wording) favour extraction; XL-Sum taught one rephrased sentence per segment.
+    - **Length compliance fails** (0.87 vs required 1.00): summaries undershoot the target (median ratio 0.177 vs
+      ~0.20). This is a hard acceptance criterion and the first thing to fix (pipeline length control), together
+      with the strategy choice; any tuning must use texts outside the 240 (reserve texts need references first).
+    - Latency on 2 vCPUs already meets the targets for torch INT8 (8.6 s median for 300–700 words, 10.9 s all);
+      ONNX INT8 is ~1.5× slower here and no better in ROUGE, so torch INT8 stays selected.
+    - Still to run on a T4: public baseline and fine-tuned direct / segmentwise / hybrid (FP32), then BERTScore,
+      human-evaluation sheets and the acceptance table.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.

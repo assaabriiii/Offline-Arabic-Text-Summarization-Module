@@ -699,8 +699,9 @@ def nb05() -> dict:
    reference rater) and, once filled, computes weighted Cohen's kappa, the third-rater list and final scores.
 5. Prints the **acceptance table** and writes `logs/05_evaluate/report.md` + `report.json`.
 
-**Runtime: T4 GPU** recommended (the model systems run on GPU for quality; the optimized CPU system always runs on
-CPU for latency). Colab's 2 vCPUs are not the reference machine: the acceptance latency comes from `bench/`.
+**Two runtimes:** run cells 0–5 once on a **CPU runtime** (lead, extractive and the CPU variants from 04: ~2 h, no GPU
+quota) and once on a **T4** (public baseline + fine-tuned model, 3 strategies: ~30 min), then cells 6–10 on either.
+Each system is resumable. Colab's 2 vCPUs are not the reference machine: the acceptance latency comes from `bench/`.
 '''), *setup_cells("05_evaluate", "requirements/colab-data.txt"), code('''
 # ==== 3. Benchmark, references and systems ============================================
 import json, os, subprocess, sys
@@ -730,45 +731,67 @@ base = {"config_paths": [f"{REPO_DIR}/{c}" for c in CONFIGS], "root": cfg["paths
         "ratio": cfg["pipeline"]["default_ratio"], "tokens_per_word": M.tokens_per_word(cfg, "arabart"),
         "threads": os.cpu_count(), "items": items[["sample_id", "domain", "text"]].to_dict("records")}
 SYSTEMS = {"lead": {"variant": None, "strategy": "lead"}, "extractive": {"variant": None, "strategy": "extractive"}}
-from huggingface_hub import snapshot_download
+# model systems run on a T4 (quality); the CPU variants from 04 run on a CPU runtime (latency, no GPU quota)
 b = M.model_entry(cfg, "arabart_xlsum_omar")
-BASE_DIR = snapshot_download(b["repo_id"], revision=b["revision"], local_dir="/content/eval_models/baseline")
-SYSTEMS[f"baseline_{EV['primary_strategy']}"] = {"variant": "torch_fp32", "model_dir": BASE_DIR, "device": GPU,
+SYSTEMS[f"baseline_{EV['primary_strategy']}"] = {"variant": "torch_fp32", "model_dir": "HF:baseline", "device": "cuda",
                                                  "strategy": EV["primary_strategy"], "decoding": dict(cfg["decoding"])}
 FT_DIR = M.local_path(cfg, "arabart_ft")
 if (FT_DIR / "config.json").exists():
     for st in [EV["primary_strategy"], *EV["ablation_strategies"]]:
-        SYSTEMS[f"ft_{st}"] = {"variant": "torch_fp32", "model_dir": str(FT_DIR), "device": GPU, "strategy": st,
+        SYSTEMS[f"ft_{st}"] = {"variant": "torch_fp32", "model_dir": str(FT_DIR), "device": "cuda", "strategy": st,
                                "decoding": M.decoding_for(cfg, "arabart_ft")}
 CPU_DIR = C.root(cfg) / "models" / cfg["optimize"]["export_name"]
 CPU_RT = read_json(CPU_DIR / "runtime.json") if (CPU_DIR / "runtime.json").exists() else None
 if CPU_RT:
-    SYSTEMS[f"cpu_{CPU_RT['variant']}_{EV['primary_strategy']}"] = {
+    cpu_dec = read_json(CPU_DIR / "decoding.json")
+    SYSTEMS[f"cpu_{CPU_RT['variant']}_{EV['primary_strategy']}"] = {          # selected in 04
         "variant": CPU_RT["variant"], "model_dir": str(CPU_DIR), "device": "cpu", "strategy": EV["primary_strategy"],
-        "decoding": read_json(CPU_DIR / "decoding.json")}
+        "decoding": cpu_dec}
+    onnx_int8 = C.root(cfg) / "models" / f"{cfg['optimize']['export_name']}_onnx" / "int8"
+    if CPU_RT["variant"] != "onnx_int8" and (onnx_int8 / "encoder_model.onnx").exists():   # 04 runner-up (decision 25)
+        SYSTEMS[f"cpu_onnx_int8_{EV['primary_strategy']}"] = {
+            "variant": "onnx_int8", "model_dir": str(onnx_int8), "device": "cpu", "strategy": EV["primary_strategy"],
+            "decoding": cpu_dec}
 PRIMARY = next((k for k in SYSTEMS if k.startswith("cpu_")), next((k for k in SYSTEMS if k.startswith("ft_")), None))
-print("systems:", list(SYSTEMS), "| primary:", PRIMARY, "| fine-tuned found:", (FT_DIR / "config.json").exists())
+print("runtime:", GPU, "| systems:", list(SYSTEMS), "| primary:", PRIMARY, "| fine-tuned found:", (FT_DIR / "config.json").exists())
 '''), code('''
-# ==== 4. ONNX environment (only if the optimized variant is ONNX) ======================
+# ==== 4. ONNX environment (CPU runtime, only if an ONNX system is listed; same as 04) ====
 ORT_PY = "/content/ort_env/bin/python"
-if CPU_RT and VARIANTS[CPU_RT["variant"]]["runtime"] == "onnx" and not os.path.exists(ORT_PY):
-    sh("python -m venv --system-site-packages /content/ort_env")
-    sh(f"{ORT_PY} -m pip install -q -r {REPO_DIR}/requirements/colab-onnx.txt")
+if GPU == "cpu" and any(s.get("variant") and VARIANTS[s["variant"]]["runtime"] == "onnx" for s in SYSTEMS.values()) \
+        and not os.path.exists("/content/ort_env/.ready"):
+    import shutil
+    shutil.rmtree("/content/ort_env", ignore_errors=True)
+    sh("pip install -q uv==0.9.5")
+    sh(f"uv venv -q --python {sys.executable} /content/ort_env")
+    sh(f"uv pip install -q --python {ORT_PY} torch=={torch.__version__.split('+')[0]} --index-url https://download.pytorch.org/whl/cpu")
+    sh(f"uv pip install -q --python {ORT_PY} -r {REPO_DIR}/requirements/colab-onnx.txt")
+    open("/content/ort_env/.ready", "w").close()
 '''), code('''
-# ==== 5. Run every system over the benchmark (resumable; rerun after a disconnect) =====
+# ==== 5. Run the systems that belong on THIS runtime (resumable; rerun after a disconnect) ==
+# CPU runtime: lead, extractive, cpu_* variants.  T4 runtime: baseline + ft_* systems. Run both, then cell 6.
+if GPU == "cuda" and not os.path.isdir("/content/eval_models/baseline"):
+    from huggingface_hub import snapshot_download
+    snapshot_download(b["repo_id"], revision=b["revision"], local_dir="/content/eval_models/baseline")
 for name, sysd in SYSTEMS.items():
     out = OUT / f"{name}.jsonl"
     n_done = sum(1 for _ in open(out)) if out.exists() else 0
     if n_done >= len(items):
-        print(f"[skip] {name}: {n_done}"); continue
+        print(f"[done] {name}: {n_done}"); continue
+    if sysd.get("device") == "cuda" and GPU != "cuda":
+        print(f"[later, needs T4] {name}: {n_done}/{len(items)}"); continue
+    if sysd.get("device") == "cpu" and GPU == "cuda":
+        print(f"[later, CPU runtime] {name}: {n_done}/{len(items)}"); continue
+    if sysd.get("model_dir") == "HF:baseline":
+        sysd = {**sysd, "model_dir": "/content/eval_models/baseline"}
     spec = {**base, **sysd, "system": name}
     sp = OUT / f"spec_{name}.json"; write_json(sp, spec)
     onnx = sysd.get("variant") and VARIANTS[sysd["variant"]]["runtime"] == "onnx"
     r = subprocess.run([ORT_PY if onnx else sys.executable, "-m", "arabic_summ", "summarize-batch", str(sp), str(out)],
                        capture_output=True, text=True, env=ENV, cwd=REPO_DIR)
     print(name, "rc", r.returncode, r.stderr[-1500:] if r.returncode else "")
-OUTPUTS = pd.concat([pd.read_json(OUT / f"{n}.jsonl", lines=True) for n in SYSTEMS if (OUT / f"{n}.jsonl").exists()])
-print(OUTPUTS.groupby("system").size().to_dict())
+done = [n for n in SYSTEMS if (OUT / f"{n}.jsonl").exists()]
+OUTPUTS = pd.concat([pd.read_json(OUT / f"{n}.jsonl", lines=True) for n in done]) if done else pd.DataFrame()
+print(OUTPUTS.groupby("system").size().to_dict() if len(OUTPUTS) else "no outputs yet")
 '''), code('''
 # ==== 6. Automatic metrics: ROUGE (95 % CI), length, fact check, latency ===============
 SCORED = BE.score_outputs(OUTPUTS, R, SOURCES)
