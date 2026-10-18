@@ -275,6 +275,28 @@ personal contact details.
     a first Haiku pass copied far more, 0.61 mean vs 0.49). Different writer model than the benchmark
     references (Opus), so dev numbers are for comparing settings, not for predicting benchmark scores.
 
+29. **Dev-set tuning of strategy and length post-processing (Colab CPU, 2 vCPU, torch INT8, 2026-10-18).** 90 dev
+    texts, Haiku-drafted dev references (decision 28); one generation run per row group, post-processing variants
+    re-applied to the stored raw outputs (`eval.dev_tune`).
+    | generation | post-processing | R1 | R1 stemmed | length ok | filled share | numbers ok | novel rate | median s 300–700 |
+    |---|---|---|---|---|---|---|---|---|
+    | segmentwise, min_factor 0.8 | as before | 0.289 | 0.338 | 0.878 | 0 | 0.978 | 0.162 | 8.9 |
+    | segmentwise, min_factor 0.8 | fill to lo | 0.292 | 0.341 | 1.000 | 0.032 | 0.978 | 0.156 | 8.9 |
+    | **segmentwise, min_factor 0.8** | **fill to target** | **0.307** | 0.356 | **1.000** | 0.206 | 0.978 | 0.127 | 8.9 |
+    | segmentwise, min_factor 1.0 | as before / fill to target | 0.291 / 0.293 | 0.339 / 0.341 | 0.989 / 1.000 | 0 / 0.046 | 0.989 | 0.172 | 10.1 |
+    | hybrid, min_factor 0.8 | as before / fill to target | 0.289 / 0.301 | 0.334 / 0.348 | 0.744 / 1.000 | 0 / 0.234 | 0.956 | 0.169 | 6.6 |
+    | lead / extractive | – | 0.355 / 0.329 | 0.406 / 0.379 | 1.000 | – | 1.000 | 0 | – |
+    - **Selected: segmentwise + `fill_to: target`** (config). Length compliance 1.000, +0.018 R1; about a fifth of
+      the words are source sentences added by the fill, so reports must describe the output as model summary
+      plus extractive completion.
+    - Asking the model for more words (min_factor 1.0) fixes length but adds no ROUGE: the extra words are new
+      wording (novel rate 0.17). Hybrid is worse: the model rewrites the selected sentences into its XL-Sum teaser
+      style, and numbers_ok drops to 0.956. Conclusion: with this model, pipeline settings top out at ~0.30–0.31;
+      the gap to lead is the model's training target (decision 27), so the next step is retraining on
+      multi-sentence 20 % summaries.
+    - Gemma 3 1B Q4_K_M zero-shot, for reference (20 benchmark texts, same 2 vCPUs, diagnostic): R1 0.318 vs ours
+      0.306 on the same texts, length ok 0.45, numbers ok 0.85, median 91.5 s (ours 6.8 s), 1.3 GB RSS. Not viable.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

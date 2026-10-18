@@ -127,7 +127,7 @@ pipeline:
     # 05 (2026-10-18): 32/240 summaries too short, 0 too long; 16 ended mid-sentence at max_new_tokens.
     drop_unfinished: true    # cut a trailing fragment the token limit left in a model output
     fill: extractive         # none | extractive: top up a short model summary with uncovered source sentences
-    fill_to: lo              # lo (length rule only) | target; choose on the dev set, not the benchmark
+    fill_to: target          # lo (length rule only) | target: dev set 2026-10-18 (PROGRESS 29): R1 0.292 -> 0.307
   dedup_sentence_threshold: 0.7
   merge: none                # none | abstractive  (final abstractive re-summarization pass)
 
