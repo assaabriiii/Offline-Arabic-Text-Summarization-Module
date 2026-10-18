@@ -4,6 +4,8 @@ Runs in its own process (the ONNX variants need the ONNX environment). Resumable
 in the output file are skipped. Spec JSON:
   {system, variant (or null for lead/extractive), model_dir, device, strategy, ratio, decoding,
    tokens_per_word, threads, config_paths, root, items: [{sample_id, domain, text}]}
+Optional: `keep_parts: true` also stores each model call's raw output (dev-set tuning of the
+post-processing without regenerating), `pipeline: {...}` overrides config keys of the pipeline section.
 """
 
 from __future__ import annotations
@@ -27,7 +29,10 @@ def run(spec: Mapping, out_path: str | Path) -> int:
     todo = [r for r in spec["items"] if r["sample_id"] not in done]
     if not todo:
         return 0
-    cfg = load_config(*spec["config_paths"], overrides={"paths": {"root": spec["root"]}})
+    over = {"paths": {"root": spec["root"]}}
+    if spec.get("pipeline"):
+        over["pipeline"] = spec["pipeline"]
+    cfg = load_config(*spec["config_paths"], overrides=over)
     backend = None
     if spec.get("variant"):
         from ..optimize.variants import load_backend
@@ -40,7 +45,7 @@ def run(spec: Mapping, out_path: str | Path) -> int:
         for r in todo:
             res = sm.summarize(r["text"], ratio=spec.get("ratio"), strategy=spec["strategy"])
             rec = {"system": spec["system"], "sample_id": r["sample_id"], "domain": r["domain"],
-                   **{k: v for k, v in res.to_dict().items() if k != "parts"},
+                   **{k: v for k, v in res.to_dict().items() if k != "parts" or spec.get("keep_parts")},
                    "device": getattr(backend, "device", "cpu") if backend else "cpu", "utc": utc_now()}
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()

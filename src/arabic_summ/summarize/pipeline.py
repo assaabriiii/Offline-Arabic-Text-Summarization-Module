@@ -10,9 +10,12 @@
 * ``extractive``  – TextRank selection only (baseline, no model).
 * ``lead``        – first sentences up to the budget (baseline, no model).
 
-Aggregation ("final pass"): split partial summaries into sentences, drop near-duplicate
-sentences across parts, keep document order, trim to the upper length bound at a sentence
-boundary, optionally re-summarize abstractively (`merge: abstractive`).
+Aggregation ("final pass"): drop a fragment cut off by the token limit at the end of each
+partial summary, split them into sentences, drop near-duplicate sentences across parts, keep
+document order, trim to the upper length bound at a sentence boundary, optionally re-summarize
+abstractively (`merge: abstractive`). A model summary still below its goal (`length_control.fill_to`)
+is topped up with the best-ranked source sentences it doesn't cover (`length_control.fill`), so
+the length rule holds even when the model writes too little.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from ..text.segment import Sentence, split_sentences
 from ..text.words import count_words
 from . import extractive
 from .length import LengthPolicy, allocate, token_bounds
-from .postprocess import dedup_sentences, join, to_sentences, trim_to_words
+from .postprocess import covered, dedup_sentences, drop_unfinished, join, to_sentences, trim_to_words
 
 STRATEGIES = ("direct", "segmentwise", "hybrid", "extractive", "lead")
 
@@ -45,6 +48,7 @@ class SummaryResult:
     length_ok: bool
     n_parts: int
     n_model_calls: int
+    filled_words: int = 0          # words added from the source by the length fill
     seconds: dict = field(default_factory=dict)
     parts: list = field(default_factory=list)
 
@@ -65,6 +69,10 @@ class Summarizer:
         # per-model calibration (02_preprocess) overrides the generic config value
         self.tokens_per_word = float(tokens_per_word or lc["tokens_per_word"])
         self.min_factor, self.max_factor = float(lc["min_factor"]), float(lc["max_factor"])
+        self.drop_unfinished = bool(lc.get("drop_unfinished", False))
+        self.fill, self.fill_to = lc.get("fill", "none"), lc.get("fill_to", "lo")
+        if self.fill not in ("none", "extractive") or self.fill_to not in ("lo", "target"):
+            raise ValueError("length_control.fill must be none|extractive and fill_to lo|target")
 
     # ------------------------------------------------------------------ public
     def summarize(self, text: str, ratio: float | None = None, strategy: str | None = None) -> SummaryResult:
@@ -94,29 +102,65 @@ class Summarizer:
             outs = self.backend.generate(reqs, self.decoding) if reqs else []
             calls += len(reqs)
             parts = [{"input_tokens": self.backend.count_tokens(u), "target_words": t, "output": o}
-                     for (u, t), o in zip(units, outs)]
-            sentences_out = dedup_sentences(to_sentences(outs), self.p["dedup_sentence_threshold"])
-            if self.p["merge"] == "abstractive" and len(units) > 1:
-                mn, mx = token_bounds(target, self.tokens_per_word, self.min_factor, self.max_factor)
-                merged = self.backend.generate([GenerationRequest(join(sentences_out), mn, mx)], self.decoding)[0]
-                calls += 1
-                sentences_out = dedup_sentences(to_sentences([merged]), self.p["dedup_sentence_threshold"])
+                     for (u, t), o in zip(units, outs)]          # raw model outputs
+            sentences_out, merge_calls = self._aggregate(outs, target, merge=len(units) > 1)
+            calls += merge_calls
         t2 = time.perf_counter()
 
-        final = trim_to_words(sentences_out, hi, lo)
+        final, filled = self._finish(sentences_out, sents, strategy, target, lo, hi)
         summary = join(final)
         n_out = count_words(summary)
         t3 = time.perf_counter()
         return SummaryResult(
             summary=summary, strategy=strategy, ratio=ratio, input_words=n_in, target_words=target,
             bounds=(lo, hi), output_words=n_out, length_ok=lo <= n_out <= hi,
-            n_parts=max(1, len(parts)), n_model_calls=calls,
+            n_parts=max(1, len(parts)), n_model_calls=calls, filled_words=filled,
             seconds={"preprocess": round(t1 - t0, 4), "generate": round(t2 - t1, 4),
                      "postprocess": round(t3 - t2, 4), "total": round(t3 - t0, 4)},
             parts=parts,
         )
 
+    def refinish(self, text: str, outputs: Sequence[str], ratio: float | None = None,
+                 strategy: str | None = None) -> SummaryResult:
+        """Re-run only the post-processing (unfinished-fragment drop, dedup, trim, length fill) on
+        stored raw model outputs (`parts[i]["output"]` of an earlier run), so post-processing settings
+        can be compared on a dev set without regenerating. No abstractive merge (needs the model)."""
+        strategy = strategy or self.p["strategy"]
+        ratio = self.policy.clamp_ratio(self.p["default_ratio"] if ratio is None else ratio)
+        clean = normalize(text, self.norm)
+        sents = split_sentences(clean)
+        n_in = count_words(clean)
+        target = self.policy.target_words(n_in, ratio)
+        lo, hi = self.policy.bounds(n_in, ratio, self.p["length_tolerance"])
+        sentences_out, _ = self._aggregate(list(outputs), target, merge=False)
+        final, filled = self._finish(sentences_out, sents, strategy, target, lo, hi)
+        summary = join(final)
+        n_out = count_words(summary)
+        return SummaryResult(summary=summary, strategy=strategy, ratio=ratio, input_words=n_in, target_words=target,
+                             bounds=(lo, hi), output_words=n_out, length_ok=lo <= n_out <= hi,
+                             n_parts=max(1, len(outputs)), n_model_calls=0, filled_words=filled)
+
     # ------------------------------------------------------------------ internals
+    def _aggregate(self, outs: Sequence[str], target: int, merge: bool) -> tuple[list[str], int]:
+        """Partial model outputs -> deduplicated sentences (optionally re-summarized). Returns
+        (sentences, extra model calls)."""
+        if self.drop_unfinished:
+            outs = [drop_unfinished(o) for o in outs]
+        sentences_out = dedup_sentences(to_sentences(outs), self.p["dedup_sentence_threshold"])
+        if merge and self.p["merge"] == "abstractive":
+            mn, mx = token_bounds(target, self.tokens_per_word, self.min_factor, self.max_factor)
+            merged = self.backend.generate([GenerationRequest(join(sentences_out), mn, mx)], self.decoding)[0]
+            return dedup_sentences(to_sentences([merged]), self.p["dedup_sentence_threshold"]), 1
+        return sentences_out, 0
+
+    def _finish(self, sentences_out: Sequence[str], sents: Sequence[Sentence], strategy: str, target: int,
+                lo: int, hi: int) -> tuple[list[str], int]:
+        """Length enforcement: trim at a sentence boundary, then the extractive fill for model strategies."""
+        final = trim_to_words(sentences_out, hi, lo)
+        if strategy in ("direct", "segmentwise", "hybrid") and self.fill == "extractive":
+            return self._fill(final, sents, lo if self.fill_to == "lo" else target, hi)
+        return final, 0
+
     def _units(self, sents: Sequence[Sentence], target: int, strategy: str) -> list[tuple[str, int]]:
         """(input text, word target) per model call."""
         count = self.backend.count_tokens
@@ -147,3 +191,30 @@ class Summarizer:
             idx = extractive.select([s.text for s in sents], wc, target, self.p["hybrid"]["position_weight"],
                                     max_words=hi)
         return [sents[i].text for i in idx]
+
+    def _fill(self, summary: Sequence[str], sents: Sequence[Sentence], goal: int, hi: int) -> tuple[list[str], int]:
+        """Top up a too-short model summary with the best-ranked (TextRank) source sentences it doesn't
+        already cover, never past `hi` (05, 2026-10-18: all 32 length failures were too short and
+        nothing could add words). If no whole sentence fits, the first words of the best uncovered
+        one are added, as `trim_to_words` does. Returns (sentences, words added)."""
+        out = list(summary)
+        n0 = n = count_words(join(out))
+        goal = min(goal, hi)
+        if n >= goal or not sents:
+            return out, 0
+        thr = self.p["dedup_sentence_threshold"]
+        texts = [s.text for s in sents]
+        scores = extractive.textrank_scores(texts, position_weight=self.p["hybrid"]["position_weight"])
+        order = sorted(range(len(texts)), key=lambda i: -scores[i])
+        for i in order:
+            if n >= goal:
+                break
+            w = count_words(texts[i])
+            if n + w <= hi and not covered(texts[i], out, thr):
+                out.append(texts[i])
+                n += w
+        if n < goal:
+            rest = [texts[i] for i in order if not covered(texts[i], out, thr)]
+            if rest:
+                out = trim_to_words(out + rest[:1], hi, goal)
+        return out, count_words(join(out)) - n0

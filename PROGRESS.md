@@ -241,6 +241,40 @@ personal contact details.
     - Still to run on a T4: public baseline and fine-tuned direct / segmentwise / hybrid (FP32), then BERTScore,
       human-evaluation sheets and the acceptance table.
 
+27. **Why the primary system is at 0.306 (diagnosis of the 05 CPU-half outputs, 2026-10-18).** Diagnostic only:
+    measured on the 240 benchmark texts to size each problem; no setting is chosen from it.
+    - The ceiling is not the problem: a greedy extractive oracle (best source sentences within the length bound)
+      reaches R1 0.536. Reference content is spread over the text (only 23 % of reference-matching words come
+      from the first 20 % of sentences), so lead's lead is word-level overlap, not position.
+    - Gap to lead (−0.064) ≈ **length ~0.015** (lead cut to our word count still scores 0.356) + **content /
+      wording ~0.05**. R1 precision is close to lead (0.320 vs 0.348); recall is the gap (0.298 vs 0.399).
+    - **Length control had two defects** (all 32 failures too short, none too long): per-call `min_new_tokens` is
+      only 0.8× the budget and nothing tops up a short result (`trim_to_words` fills only from leftover
+      sentences); per-call `max_new_tokens` (≈56 tokens for a 36-word budget) cut 16 summaries mid-sentence.
+    - **The model writes XL-Sum teasers, not 20 % summaries**: 0.8 numbers per summary (references 4.5; lead 2.6),
+      13 % of reference numbers recalled (lead 38 %), 28 % of key points covered (lead 41 %), novel-content rate
+      0.18 (references 0.12), formulaic openings ("قالت منظمة …", "حذرت منظمة …"); beats lead on 56/240 texts.
+      Causes: one-sentence highlight targets; trained on whole articles but run on 320-token segments; no
+      organisational-report text in training; 6/240 summaries contain a number absent from the source.
+    - Scorer: with light stemming (`facts.stem`) every system gains ~0.05 (ours 0.356, lead 0.422). Our ROUGE stays
+      unstemmed (decision 17); a stemmed score may only be added as a secondary number with project-lead approval.
+    - References: median length ratio 0.188, 47/240 outside our own 20 % ± 20 % bounds (to check in human review).
+
+28. **Length fix + dev set (2026-10-18).** `length_control.drop_unfinished` removes a fragment cut off by the
+    token limit; `length_control.fill: extractive` tops up a model summary that is still below its goal with
+    the best-ranked (TextRank) source sentences it doesn't cover, never past the upper bound (`fill_to: lo`
+    by default; `target` to be decided on the dev set). Code defaults keep the old behaviour; the config turns
+    both on. `Summarizer.refinish` re-applies the post-processing to stored raw outputs (`summarize-batch` with
+    `keep_parts: true`), and `eval.dev_tune` scores the post-processing variants without regenerating.
+    Simulated on the benchmark outputs (diagnostic): length compliance 0.867 → 1.000, R1 +0.001 (fill to lo) or
+    +0.017 (fill to target).
+    **Dev set**: the 90 reserve texts (30 news + 60 org, passed the same screening, never sampled; no overlap
+    with the 240). References drafted by Claude Haiku (`writer_id = claude-haiku`, guideline v1.0 §2–§5, same
+    validator checks: length, numbers in source, key points ≥ 3, single paragraph), then adjusted so their
+    copy share (summary bigrams found in the source) matches the benchmark references' range (0.36–0.62;
+    a first Haiku pass copied far more, 0.61 mean vs 0.49). Different writer model than the benchmark
+    references (Opus), so dev numbers are for comparing settings, not for predicting benchmark scores.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

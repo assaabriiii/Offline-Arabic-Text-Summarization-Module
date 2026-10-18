@@ -124,6 +124,10 @@ pipeline:
     tokens_per_word: 1.6     # replaced by the per-model calibration from 02_preprocess
     min_factor: 0.8
     max_factor: 1.25
+    # 05 (2026-10-18): 32/240 summaries too short, 0 too long; 16 ended mid-sentence at max_new_tokens.
+    drop_unfinished: true    # cut a trailing fragment the token limit left in a model output
+    fill: extractive         # none | extractive: top up a short model summary with uncovered source sentences
+    fill_to: lo              # lo (length rule only) | target; choose on the dev set, not the benchmark
   dedup_sentence_threshold: 0.7
   merge: none                # none | abstractive  (final abstractive re-summarization pass)
 

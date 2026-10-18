@@ -2,15 +2,43 @@
 
 from __future__ import annotations
 
+import re
 from typing import Sequence
 
 from ..text.normalize import normalize_for_matching
 from ..text.segment import split_sentences
 from ..text.words import count_words
 
+# sentence-final punctuation, optionally followed by closing quotes / brackets
+_SENTENCE_END = re.compile(r"[.!?؟…][\"'»”)\]]*\s*$")
+_LAST_END = re.compile(r"^(.*[.!?؟…][\"'»”)\]]*)", re.S)
+
 
 def _tokset(s: str) -> set[str]:
     return set(normalize_for_matching(s).split())
+
+
+def drop_unfinished(text: str) -> str:
+    """Remove a trailing fragment that `max_new_tokens` cut off mid-sentence (05, 2026-10-18: 16 of
+    240 summaries ended mid-sentence). Keeps everything up to the last sentence-final punctuation; an
+    output without any complete sentence is returned unchanged (the length fill handles it)."""
+    text = text.strip()
+    if not text or _SENTENCE_END.search(text):
+        return text
+    m = _LAST_END.match(text)
+    return m.group(1).strip() if m else text
+
+
+def covered(sentence: str, kept: Sequence[str], threshold: float = 0.7) -> bool:
+    """True if most words of `sentence` already occur in one of `kept` (same measure as dedup)."""
+    toks = _tokset(sentence)
+    if not toks:
+        return True
+    for k in kept:
+        kt = _tokset(k)
+        if kt and len(toks & kt) / min(len(toks), len(kt)) >= threshold:
+            return True
+    return False
 
 
 def dedup_sentences(sentences: Sequence[str], threshold: float = 0.7) -> list[str]:

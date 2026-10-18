@@ -156,3 +156,107 @@ def test_lead_and_extractive_respect_length_bounds_on_short_sentence_texts():
     for st in ("lead", "extractive"):
         r = sm.summarize(text, strategy=st)
         assert r.length_ok, (st, r.output_words, r.bounds)
+
+
+# ---------------------------------------------------------------- length fill / unfinished outputs
+
+class _TerseBackend:
+    """Ignores min_new_tokens and writes one short sentence per call, like a model trained on
+    one-sentence highlights; `cut` appends a fragment without final punctuation."""
+
+    name = "terse"
+    max_input_tokens = 1024
+
+    def __init__(self, words=6, cut=False):
+        self.words, self.cut = words, cut
+
+    def count_tokens(self, text):
+        return len(text.split())
+
+    def generate(self, requests, decoding):
+        out = []
+        for r in requests:
+            w = r.text.split()
+            s = " ".join(w[: self.words]).rstrip(".") + "."
+            out.append(s + (" " + " ".join(w[self.words : self.words + 4]).rstrip(".") if self.cut else ""))
+        return out
+
+
+def _cfg(**lc):
+    return {**CFG, "pipeline": {**CFG["pipeline"], "length_control": {**CFG["pipeline"]["length_control"], **lc}}}
+
+
+def test_drop_unfinished():
+    from arabic_summ.summarize.postprocess import drop_unfinished
+
+    assert drop_unfinished("جملة كاملة. وجملة لم") == "جملة كاملة."
+    assert drop_unfinished("قال: «انتهى الأمر.» ثم") == "قال: «انتهى الأمر.»"
+    assert drop_unfinished("جملة كاملة؟") == "جملة كاملة؟"
+    assert drop_unfinished("لا توجد علامة نهاية") == "لا توجد علامة نهاية"   # nothing complete: keep
+    assert drop_unfinished("") == ""
+
+
+@pytest.mark.parametrize("strategy", ["direct", "segmentwise", "hybrid"])
+def test_fill_reaches_minimum_when_model_writes_too_little(strategy):
+    text = doc(40, 15, seed=4)  # 600 words -> bounds around 120
+    off = Summarizer(_cfg(fill="none"), backend=_TerseBackend()).summarize(text, ratio=0.2, strategy=strategy)
+    assert not off.length_ok and off.output_words < off.bounds[0] and off.filled_words == 0
+    on = Summarizer(_cfg(fill="extractive", fill_to="lo"), backend=_TerseBackend()).summarize(text, ratio=0.2, strategy=strategy)
+    assert on.length_ok and on.filled_words > 0
+    assert on.summary.startswith(off.summary.split(".")[0])            # model sentences stay first
+    tgt = Summarizer(_cfg(fill="extractive", fill_to="target"), backend=_TerseBackend()).summarize(text, ratio=0.2, strategy=strategy)
+    assert tgt.length_ok and tgt.output_words >= min(tgt.target_words, on.output_words)
+
+
+def test_fill_does_not_repeat_covered_sentences():
+    text = doc(40, 15, seed=5)
+    r = Summarizer(_cfg(fill="extractive", fill_to="target"), backend=EchoBackend()).summarize(text, strategy="segmentwise")
+    sents = [s.strip() for s in r.summary.split(".") if s.strip()]
+    assert len(sents) == len(set(sents))
+
+
+def test_unfinished_fragments_are_dropped_before_aggregation():
+    text = doc(40, 15, seed=6)
+    keep = Summarizer(_cfg(drop_unfinished=False, fill="none"), backend=_TerseBackend(cut=True)).summarize(text, strategy="segmentwise")
+    drop = Summarizer(_cfg(drop_unfinished=True, fill="none"), backend=_TerseBackend(cut=True)).summarize(text, strategy="segmentwise")
+    assert not keep.summary.rstrip().endswith(".") or keep.output_words > drop.output_words
+    assert drop.summary.rstrip().endswith(".")
+
+
+def test_fill_settings_are_validated():
+    with pytest.raises(ValueError):
+        Summarizer(_cfg(fill="abstractive"), backend=EchoBackend())
+
+
+def test_parts_keep_raw_model_outputs():
+    r = Summarizer(_cfg(drop_unfinished=True, fill="none"), backend=_TerseBackend(cut=True)).summarize(
+        doc(40, 15, seed=7), strategy="segmentwise")
+    assert r.parts and all(not p["output"].endswith(".") for p in r.parts)   # fragment kept in parts
+    assert r.summary.rstrip().endswith(".")                                  # but not in the summary
+
+
+@pytest.mark.parametrize("strategy", ["segmentwise", "hybrid"])
+def test_refinish_reproduces_summarize_from_stored_parts(strategy):
+    text = doc(40, 15, seed=8)
+    for lc in ({"fill": "none", "drop_unfinished": False}, {"fill": "extractive", "fill_to": "target", "drop_unfinished": True}):
+        sm = Summarizer(_cfg(**lc), backend=_TerseBackend(cut=True))
+        r = sm.summarize(text, strategy=strategy)
+        again = sm.refinish(text, [p["output"] for p in r.parts], strategy=strategy)
+        assert (again.summary, again.output_words, again.filled_words) == (r.summary, r.output_words, r.filled_words)
+
+
+def test_dev_tune_scores_every_post_variant_from_stored_parts():
+    from arabic_summ.eval.dev_tune import POST_VARIANTS, score_variants
+
+    sm = Summarizer(_cfg(fill="none"), backend=_TerseBackend(cut=True))
+    texts = {f"D{k}": doc(40, 15, seed=20 + k) for k in range(3)}
+    recs = []
+    for sid, t in texts.items():
+        r = sm.summarize(t, strategy="segmentwise").to_dict()
+        recs.append({**r, "sample_id": sid})
+    refs = {sid: " ".join(t.split()[:120]) for sid, t in texts.items()}
+    rows = score_variants(CFG, {"seg": recs}, texts, refs)
+    by = {r["post"]: r for r in rows}
+    assert set(by) == set(POST_VARIANTS) and all(r["n"] == 3 for r in rows)
+    assert by["as_before"]["length_ok"] < 1 and by["fill_lo"]["length_ok"] == 1 and by["fill_target"]["length_ok"] == 1
+    assert by["as_before"]["filled_share"] == 0 < by["fill_lo"]["filled_share"] <= by["fill_target"]["filled_share"]
