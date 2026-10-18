@@ -101,7 +101,7 @@ normalization:
 
 # ------------------------------------------------------- summarization pipeline (02)
 pipeline:
-  strategy: segmentwise      # direct | segmentwise | hybrid | extractive | lead
+  strategy: direct           # direct | segmentwise | hybrid | extractive | lead (direct: dev set + benchmark, PROGRESS 32-33)
   default_ratio: 0.20        # user-configurable at call time, clamped to [min_ratio, max_ratio]
   min_ratio: 0.10
   max_ratio: 0.30
