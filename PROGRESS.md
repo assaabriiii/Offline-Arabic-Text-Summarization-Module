@@ -447,6 +447,17 @@ personal contact details.
     `attribution_single_source: true`; `fill_cover_threshold: 0.5`, `fill_skip_titles: true`, `fill_number_bonus: 0.3`.
     Next: re-run the CPU primary of 05 on the 240 texts (old outputs and the unused human-eval sheets moved to
     `archive_decision34/`), new human-eval sheets. The GPU ablations (`ft_style_*`) keep the decision-34 post-processing.
+    **05 CPU re-run (commit aeb0afa, Colab 2 vCPU; INTERIM references):** primary `cpu_torch_int8_direct` R1
+    **0.382** (95 % CI 0.372–0.393; was 0.376), xlsum **0.443** (0.433–0.453), R2 0.197, RL 0.240, length 1.000,
+    numbers_ok 1.000, novel rate 0.009, median latency 10.6 s (300–700) / 13.4 s (all). vs baseline +0.065 R1.
+    1.84 model sentences dropped per text (191/240 texts); fill share 0.458; numbers per summary 2.5 → 3.0.
+    Per text vs decision 34: R1 better on 103, same on 53, worse on 84.
+    Spot check (Claude): the known errors are gone (NEWS-0002 "are Americans", ORG-0065 500–600 thousand vaccinated,
+    NEWS-0086 draw, NEWS-0096 2015, ORG-0023 Dr Rahaf quote, NEWS-0101 "15 thousand returned"; NEWS-0079 a
+    Kılıçdaroğlu quote given to the Moscow Patriarchate). False rejections of correct sentences: negation window crossing
+    a clause (ORG-0139 "لا داعي له، تدعم"), speaker introduced > 2 sentences earlier (NEWS-0083). Fill weaknesses:
+    rhetorical questions, datelines ("1 تشرين الأول/ أكتوبر 2026 -"), heading lines glued to a sentence.
+    Not run yet: BERTScore, human-eval sheets, report (cells 7/8/10) — pending a second tuning round on these points.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
