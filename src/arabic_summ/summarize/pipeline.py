@@ -34,7 +34,8 @@ from ..text.words import count_words
 from . import extractive
 from .faithful import filter_sentences
 from .length import LengthPolicy, allocate, token_bounds
-from .postprocess import covered, dedup_sentences, drop_unfinished, is_complete, join, to_sentences, trim_to_words
+from .postprocess import (covered, dedup_sentences, drop_unfinished, fix_quotes, is_complete, is_question, join,
+                          strip_lead, to_sentences, trim_to_words)
 
 STRATEGIES = ("direct", "segmentwise", "hybrid", "extractive", "lead")
 
@@ -80,6 +81,9 @@ class Summarizer:
         self.fill_cover = float(lc.get("fill_cover_threshold", p["dedup_sentence_threshold"]))
         self.fill_skip_titles = bool(lc.get("fill_skip_titles", False))
         self.fill_number_bonus = float(lc.get("fill_number_bonus", 0.0))
+        self.fill_skip_questions = bool(lc.get("fill_skip_questions", False))
+        self.fill_fix_quotes = bool(lc.get("fill_fix_quotes", False))
+        self.fill_strip_leads = bool(lc.get("fill_strip_leads", False))
         self.faith = dict(p.get("faithfulness") or {})
 
     # ------------------------------------------------------------------ public
@@ -213,7 +217,9 @@ class Summarizer:
         already cover, never past `hi` (05, 2026-10-18: all 32 length failures were too short and
         nothing could add words). Optionally sentences with numbers rank higher (`fill_number_bonus`)
         and headings without end punctuation are skipped (`fill_skip_titles`; 05 review: page titles
-        glued on). If no whole sentence fits, the first words of the best uncovered one are added, as
+        glued on), as are rhetorical questions (`fill_skip_questions`); datelines / quoted crossheads
+        at the start of a sentence are removed (`fill_strip_leads`) and pieces of multi-sentence quotes
+        repaired or skipped (`fill_fix_quotes`) first (PROGRESS 37). If no whole sentence fits, the first words of the best uncovered one are added, as
         `trim_to_words` does. Returns (sentences, words added)."""
         out = list(summary)
         n0 = n = count_words(join(out))
@@ -223,13 +229,17 @@ class Summarizer:
         thr = self.fill_cover
         texts = [s.text for s in sents]
         scores = extractive.textrank_scores(texts, position_weight=self.p["hybrid"]["position_weight"])
-        if self.fill_number_bonus:
+        if self.fill_number_bonus:          # on the original sentence: a dateline's date counts
             scores = scores * [1 + self.fill_number_bonus * any(ch.isdigit() for ch in t) for t in texts]
+        if self.fill_strip_leads:
+            texts = [strip_lead(t, dateline=k < 3) for k, t in enumerate(texts)]
+        if self.fill_fix_quotes:
+            texts = [fix_quotes(t) or "" for t in texts]      # "" = skipped (no words, never fits)
         order = sorted(range(len(texts)), key=lambda i: -scores[i])
         for i in order:
             if n >= goal:
                 break
-            if self.fill_skip_titles and not is_complete(texts[i]):
+            if not self._fill_ok(texts[i]):
                 continue
             w = count_words(texts[i])
             if n + w <= hi and not covered(texts[i], out, thr):
@@ -237,8 +247,11 @@ class Summarizer:
                 n += w
         if n < goal:
             rest = [texts[i] for i in order if not covered(texts[i], out, thr)]
-            if self.fill_skip_titles:
-                rest = [t for t in rest if is_complete(t)] or rest
+            rest = [t for t in rest if self._fill_ok(t)] or rest
             if rest:
                 out = trim_to_words(out + rest[:1], hi, goal)
         return out, count_words(join(out)) - n0
+
+    def _fill_ok(self, text: str) -> bool:
+        return bool(text) and not ((self.fill_skip_titles and not is_complete(text))
+                                   or (self.fill_skip_questions and is_question(text)))

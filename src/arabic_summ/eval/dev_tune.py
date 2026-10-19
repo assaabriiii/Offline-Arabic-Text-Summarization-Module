@@ -43,6 +43,33 @@ FAITH_VARIANTS = {
     "filter+fill+num0.6": {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.6,
                            "faithfulness": _ON},
 }
+# second round (PROGRESS 37): speaker window, fill cleanup; on top of the PROGRESS 36 setting
+_D36 = {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.3,
+        "fill_skip_questions": False, "fill_fix_quotes": False, "fill_strip_leads": False,
+        "faithfulness": {**_ON, "max_support_sentences": 1, "attribution_single_source": True,
+                         "attribution_window": 2, "attribution_name_match": False,
+                         "attribution_latest_speaker": False}}
+_CLEAN = {"fill_skip_questions": True, "fill_fix_quotes": True, "fill_strip_leads": True}
+ROUND2_VARIANTS = {
+    "d36": _D36,
+    "win3": {**_D36, "faithfulness": {**_D36["faithfulness"], "attribution_window": 3}},
+    "win4": {**_D36, "faithfulness": {**_D36["faithfulness"], "attribution_window": 4}},
+    "win_all": {**_D36, "faithfulness": {**_D36["faithfulness"], "attribution_window": None}},
+    "no_questions": {**_D36, "fill_skip_questions": True},
+    "no_questions+quotes": {**_D36, "fill_skip_questions": True, "fill_fix_quotes": True},
+    "clean+name+win3": {**_D36, **_CLEAN, "faithfulness": {**_D36["faithfulness"], "attribution_name_match": True,
+                                                         "attribution_window": 3}},
+    "clean": {**_D36, **_CLEAN},
+    "clean+win3": {**_D36, **_CLEAN, "faithfulness": {**_D36["faithfulness"], "attribution_window": 3}},
+    "clean+win4": {**_D36, **_CLEAN, "faithfulness": {**_D36["faithfulness"], "attribution_window": 4}},
+    "clean+win_all": {**_D36, **_CLEAN, "faithfulness": {**_D36["faithfulness"], "attribution_window": None}},
+    "clean+name+win3+latest": {**_D36, **_CLEAN, "faithfulness": {**_D36["faithfulness"], "attribution_name_match": True,
+                                                                "attribution_window": 3,
+                                                                "attribution_latest_speaker": True}},
+    "name": {**_D36, "faithfulness": {**_D36["faithfulness"], "attribution_name_match": True}},
+    "name+win3": {**_D36, "faithfulness": {**_D36["faithfulness"], "attribution_name_match": True,
+                                           "attribution_window": 3}},
+}
 
 
 def _with_length_control(cfg: Mapping, lc: Mapping) -> dict:

@@ -132,6 +132,10 @@ pipeline:
     fill_cover_threshold: 0.5  # a fill sentence is skipped if this share of its words is already in one summary sentence
     fill_skip_titles: true   # skip source lines without end punctuation (page titles) in the fill
     fill_number_bonus: 0.3   # TextRank score x (1 + bonus) for source sentences with a number
+    # dev set 2026-10-19 (PROGRESS 37): R1 0.380 -> 0.380 (neutral), readability fixes from the 05 review
+    fill_skip_questions: true  # skip rhetorical questions ("هل على معتادي السهر ...؟")
+    fill_strip_leads: true   # remove datelines (first 3 sentences) and quoted crossheads at a sentence start
+    fill_fix_quotes: true    # close / open a quote split across sentences when a speaker is named, else skip
   faithfulness:              # drop unfaithful model sentences, the fill replaces them (PROGRESS 35-36; summarize/faithful.py)
     enabled: true
     min_support: 0.8         # share of the claim's content stems found in its best support sentences
@@ -140,7 +144,9 @@ pipeline:
     negation: true
     quotes: 0.7              # share of a quoted span's word bigrams found in the source
     attribution: 0.5         # share of the speaker's words found near the claim's support sentences
-    attribution_window: 2    # support sentence and the 2 before it
+    attribution_window: 3    # support sentence and the 3 before it (PROGRESS 37: 2 -> 3)
+    attribution_name_match: true       # or: named in the latest nearby speaker phrase, described earlier
+    attribution_latest_speaker: true   # reject if the latest speaker phrase before the claim names someone else
     attribution_single_source: true    # an attributed claim must come from one source sentence
   dedup_sentence_threshold: 0.7
   merge: none                # none | abstractive  (final abstractive re-summarization pass)

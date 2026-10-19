@@ -272,3 +272,17 @@ def test_dev_tune_faith_variants_report_rejections():
     rows = score_variants(CFG, {"seg": recs}, texts, refs, FAITH_VARIANTS)
     assert {r["post"] for r in rows} == set(FAITH_VARIANTS) and all("rejected_per_text" in r for r in rows)
     assert next(r for r in rows if r["post"] == "no_filter")["rejected_per_text"] == 0
+
+
+def test_fill_text_cleanup_helpers():
+    from arabic_summ.summarize.postprocess import fix_quotes, is_question, strip_lead
+    assert strip_lead("1 تشرين الأول/ أكتوبر 2026 - إن الحصول على الخدمات مهم.") == "إن الحصول على الخدمات مهم."
+    assert strip_lead("غزة، الأرض الفلسطينية المحتلة - قالت أمل: \"نعم\".") == "قالت أمل: \"نعم\"."
+    assert strip_lead("\"مهمة مجتمع\" وعوضا عن ذلك، فإن أماكن العمل بحاجة إلى جهد.") == "وعوضا عن ذلك، فإن أماكن العمل بحاجة إلى جهد."
+    later = "وقال البروفيسور ليم، رئيس قسم كوفيد - 19 في اللجنة، إن اللقاح آمن."
+    assert strip_lead(later) == later and strip_lead("الخليل، جنين - طريق مغلق.", dateline=False) == "الخليل، جنين - طريق مغلق."
+    assert fix_quotes("قالت عائشة: \"ما يقلقني هو الغلاء.") == "قالت عائشة: \"ما يقلقني هو الغلاء\"."
+    assert fix_quotes("ولم يتبق معنا شيء\"، هكذا قالت ليلى.") == "\"ولم يتبق معنا شيء\"، هكذا قالت ليلى."
+    assert fix_quotes("\" لم يكن شيء ليهيئني لما رأيته.") is None
+    assert fix_quotes("قال كيري \"نعم\".") == "قال كيري \"نعم\"."
+    assert is_question("هل علينا أن نستيقظ مبكرا؟") and not is_question("نستيقظ مبكرا.")

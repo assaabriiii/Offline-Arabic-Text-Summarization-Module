@@ -17,10 +17,14 @@ Checks (`pipeline.faithfulness`; a threshold of null switches a check off):
                  uses must be kept, and the sentence may not negate what its support sentences don't
 * quotes       - >= `quotes` of each quoted span's word bigrams (light stems) occur in the source
 * attribution  - the speaker's words occur in the claim's support sentences or the
-                 `attribution_window` sentences before them (share >= `attribution`); with
+                 `attribution_window` sentences before them (null: any earlier sentence; share >=
+                 `attribution`); with
                  `attribution_single_source` the claim of an attributed sentence must come from one source
                  sentence (dev review: two facts fused under one speaker); a quote whose source sentence
-                 names another speaker ("تقول هيفاء: ...") is rejected
+                 names another speaker ("تقول هيفاء: ...") is rejected; with `attribution_name_match` a
+                 speaker named in the speaker phrase of a nearby support sentence and described earlier
+                 passes; with `attribution_latest_speaker` the latest speaker phrase at or before the
+                 support sentence (within the window) must share a word with the speaker
 """
 
 from __future__ import annotations
@@ -92,12 +96,17 @@ def _number(t: str) -> str:
 
 
 def _negations(tokens: Sequence[str]) -> list[set[str]]:
-    """Content stems governed by each negation (its next three word tokens)."""
+    """Content stems governed by each negation (its next three word tokens, up to the next punctuation:
+    05 review, "دون تأخير لا داعي له، تدعم ..." does not negate "تدعم")."""
     out = []
     for i, t in enumerate(tokens):
         if _strip_conj(t, _NEG) is None:
             continue
-        nxt = [x for x in tokens[i + 1:i + 6] if _is_word(x)][:3]
+        nxt = []
+        for x in tokens[i + 1:i + 4]:
+            if not _is_word(x):
+                break
+            nxt.append(x)
         if nxt and nxt[0] in _NOT_NEG_NEXT:
             continue
         out.append(_content(nxt))
@@ -127,6 +136,10 @@ class FaithfulnessChecker:
         self.nums = [{_number(t) for t in ts if _DIGITS.match(t)} for ts in toks]
         self.negs = [_negations(ts) for ts in toks]
         self.speakers = [_content(_speaker(ts)[0]) for ts in toks]
+        self.df: dict[str, int] = {}
+        for ss in self.sets:
+            for t in ss:
+                self.df[t] = self.df.get(t, 0) + 1
         words = [[_key(t) for t in ts if _is_word(t)] for ts in toks]
         self.words = {t for ws in words for t in ws}
         self.bigrams = {(a, b) for ws in words for a, b in zip(ws, ws[1:])}
@@ -143,6 +156,24 @@ class FaithfulnessChecker:
             chosen.append(best)
             need -= self.sets[best]
         return chosen, need
+
+    def _latest_speaker(self, i: int, w) -> set[str]:
+        """Speaker phrase of the latest source sentence at or before `i` (within `w` before it) that has one."""
+        lo = 0 if w is None else max(0, i - int(w))
+        return next((self.speakers[j] for j in range(i, lo - 1, -1) if self.speakers[j]), set())
+
+    def _named_nearby(self, ss: set[str], chosen: list[int], w) -> bool:
+        """`attribution_name_match`: the speaker is named by a rare word (a name, in <= 20% of the source
+        sentences) in the latest speaker phrase at or before a support sentence, within the window
+        ("قال ليونز إن ..."), and the rest of the description occurs earlier ("الخبير الاقتصادي البريطاني
+        جيرارد ليونز", first mention)."""
+        if not self.cfg.get("attribution_name_match"):
+            return False
+        rare = max(2, 0.2 * len(self.sets))
+        if not any(self.df.get(t, 0) <= rare for i in chosen for t in ss & self._latest_speaker(i, w)):
+            return False
+        before = set().union(*self.sets[:max(chosen) + 1])
+        return len(ss & before) / len(ss) >= self.cfg["attribution"]
 
     def reasons(self, sentence: str) -> list[str]:
         c = self.cfg
@@ -184,9 +215,13 @@ class FaithfulnessChecker:
                     break
         if c.get("attribution") is not None and spk and chosen:
             ss = _content(spk)
-            w = int(c.get("attribution_window", 2))
-            near = set().union(*(self.sets[j] for i in chosen for j in range(max(0, i - w), i + 1)))
-            if ss and len(ss & near) / len(ss) < c["attribution"]:
+            w = c.get("attribution_window", 2)
+            near = set().union(*(self.sets[j] for i in chosen
+                                 for j in range(0 if w is None else max(0, i - int(w)), i + 1)))
+            latest = self._latest_speaker(chosen[0], w) if c.get("attribution_latest_speaker") else set()
+            if ss and len(ss & near) / len(ss) < c["attribution"] and not self._named_nearby(ss, chosen, w):
+                out.append("attribution")
+            elif ss and latest and not ss & latest:      # the source gives the claim to someone else
                 out.append("attribution")
             elif ss and c.get("attribution_single_source") and len(claim) >= 2 \
                     and len(claim & self.sets[chosen[0]]) / len(claim) < c["min_support"]:
