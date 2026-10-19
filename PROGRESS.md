@@ -13,7 +13,7 @@ personal contact details.
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
 | 3b | `03b_style_finetune.ipynb`: continue `arabart_ft` on filtered oddadmix pairs | **done (2026-10-18)**: `models/arabart_ft_style`, dev R1 0.360 (decision 32) |
 | 4b | 04 for the style model | **done (2026-10-19)**: torch INT8 → `models/arabart_ft_style_cpu`, 531 MB, median 12.8 s on 2 vCPUs (decision 34) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` R1 **0.376** strict / 0.436 XL-Sum-style, all other automatic criteria pass (decision 34). Manual review found unfaithful rewritten sentences (decision 35). Human evaluation pending (sheets on Drive) |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.376** strict / 0.438 XL-Sum-style, BERTScore 0.751, other automatic criteria pass. INT8 output varies with the CPU type (decision 37). Human-evaluation sheets written (100 items), waiting for raters |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -476,7 +476,28 @@ personal contact details.
     "Netanyahu said the report shows"). Fill cleanup changed 31 dev texts: questions, datelines and crossheads gone,
     ~20 split quotes repaired. Still not caught: unquoted headings glued to a sentence ("اضطراب الساعة البيولوجية
     إنه ..."), datelines without a digit/comma later in a text.
-    Next: 05 CPU re-run on the 240 texts (decision-36 outputs → `archive_decision36/`), then cells 7/8/10.
+    **05 CPU re-run (commit 9d9bba7, Colab 2 vCPU AMD EPYC 7B12; INTERIM references; decision-36 outputs and report
+    in `archive_decision36/`; raw model outputs kept this time, `keep_parts`):** primary `cpu_torch_int8_direct` R1
+    **0.376** (95 % CI 0.367–0.386), xlsum **0.438** (0.429–0.448), R2 0.192, RL 0.240, length 1.000, numbers_ok
+    1.000, novel 0.008, BERTScore F1 0.751 (ft_style_direct 0.751, extractive 0.745, lead 0.744, baseline 0.729),
+    median latency 6.1 s (300–700) / 7.6 s (all), +0.059 R1 vs baseline. Acceptance: ROUGE-1 > 0.4 still fails
+    (xlsum passes if approved); length, latency, RAM, size pass; human criteria pending.
+    - **The INT8 model's text depends on the CPU.** Decision 36 ran on an Intel Xeon 2.20 GHz, this run on an AMD EPYC:
+      only 81 of the 442 model sentences rejected in decision 36 occur again, 25 / 240 summaries are identical when
+      the decision-36 post-processing is re-applied, and generation is ~35 % faster. On the same raw outputs the
+      decision-36 settings give R1 0.378 and the new ones 0.376 (−0.0015; dev −0.0007), so most of the 0.382 → 0.376
+      change is the CPU, not this round. ROUGE of the deployed system can move by ~±0.005 between machines: the
+      official numbers must come from the reference machine (`bench/`), and dev tuning should use outputs from it.
+    - Fill problems in the 240 summaries (decision 36 → 37): questions 15 → 6, sentences starting with a dateline /
+      crosshead 45 → 6, split-quote pieces 59 → 22 (the rest are in model-written sentences, which the fill cleanup
+      doesn't touch). ORG-0139 keeps its correct lead sentence (R1 0.253 → 0.376); NEWS-0083 has no questions and
+      the wrong Roenneberg attribution is still dropped. On the new raw outputs the filter again dropped the new
+      errors (NEWS-0002 "الجنود الأمريكيين ليسوا أمريكيين", "148 American soldiers since 2001"; NEWS-0079 the
+      Kılıçdaroğlu quote given to Metropolitan Hilarion; NEWS-0086 "تعادل").
+    - Still seen: model sentences with a pronoun speaker ("ويضيف أن ...", "تقول: ..." at the start of a summary) are
+      not checked for attribution; NEWS-0101 "المدير السابق للمتحف" title; first-person quote text without quote
+      marks in the fill (ORG-0065 "مسقط رأسي هلسنكي").
+    Human-eval sheets written for this run (100 items, `logs/05_evaluate/human_eval/`); report.md / report.json updated.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
@@ -531,6 +552,7 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
   `approved_only: true`, re-run 05 for final (non-interim) numbers.
 - Two raters fill `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
 - Project lead: approve or reject the XL-Sum-style ROUGE (decision 30), AI-drafted references, oddadmix (no
-  license, research use), the extractive length fill (~18 % of words).
-- Optional before human evaluation: a sentence-level faithfulness filter (decision 35).
+  license, research use), the extractive length fill (~47 % of words after the faithfulness filter).
+- Official numbers from the reference machine: the INT8 model's output depends on the CPU (decision 37), so run 05's
+  primary there (or on one fixed CPU type) and re-tune post-processing on dev outputs from the same machine.
 - `bench/` on the 8-core reference machine (official latency; torch vs ONNX INT8).
