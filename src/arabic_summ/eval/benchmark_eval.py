@@ -4,8 +4,9 @@ References: rows of references.csv with a summary. With `approved_only` only rev
 rows count (final report); otherwise every drafted reference is used and the report says how many
 were approved, so interim numbers are never presented as final.
 
-ROUGE: the primary score is unstemmed (decision 17); `secondary_stem="snowball"` adds `*_xlsum`
-columns (XL-Sum-style Snowball stemming, decision 30), reported next to it, never instead of it.
+ROUGE: `secondary_stem="snowball"` adds `*_xlsum` columns (XL-Sum-style Snowball stemming, decision 30)
+next to the unstemmed score (decision 17). `acceptance.rouge1_metric: xlsum` (project-lead approval,
+decision 38) makes the stemmed score the acceptance metric; the unstemmed one is still reported.
 """
 
 from __future__ import annotations
@@ -98,14 +99,18 @@ def acceptance(system: str, summ: pd.DataFrame, lat: pd.DataFrame, crit: Mapping
     """One row per proposal criterion: value, target, pass / pending."""
     a = summ[(summ.system == system) & (summ.subset == "all")].iloc[0]
     L = lat[lat.system == system].set_index("band") if len(lat) else pd.DataFrame()
-    rows = [
-        {"criterion": "ROUGE-1 F1", "value": a.rouge1, "target": f"> {crit['min_rouge1']}", "pass": a.rouge1 > crit["min_rouge1"]},
-    ]
-    if "rouge1_xlsum" in a and pd.notna(a.get("rouge1_xlsum")):
-        # secondary only: shown for comparison with published XL-Sum numbers; pass is left open (None)
-        # because switching the acceptance metric needs project-lead approval (decision 30)
-        rows.append({"criterion": "ROUGE-1 F1, XL-Sum-style Snowball stemming (secondary)", "value": a.rouge1_xlsum,
-                     "target": f"> {crit['min_rouge1']} (if approved as the metric)", "pass": None})
+    t = crit["min_rouge1"]
+    has_xl = "rouge1_xlsum" in a and pd.notna(a.get("rouge1_xlsum"))
+    if crit.get("rouge1_metric", "strict") == "xlsum" and has_xl:
+        rows = [{"criterion": "ROUGE-1 F1, XL-Sum-style Snowball stemming", "value": a.rouge1_xlsum, "target": f"> {t}",
+                 "pass": a.rouge1_xlsum > t},
+                {"criterion": "ROUGE-1 F1, unstemmed (reported)", "value": a.rouge1, "target": "reported", "pass": None}]
+    else:
+        rows = [{"criterion": "ROUGE-1 F1", "value": a.rouge1, "target": f"> {t}", "pass": a.rouge1 > t}]
+        if has_xl:
+            # secondary only, shown for comparison with published XL-Sum numbers (decision 30)
+            rows.append({"criterion": "ROUGE-1 F1, XL-Sum-style Snowball stemming (secondary)", "value": a.rouge1_xlsum,
+                         "target": f"> {t} (if approved as the metric)", "pass": None})
     rows += [
         {"criterion": "ROUGE-2 / ROUGE-L F1", "value": f"{a.rouge2} / {a.rougeL}", "target": "reported", "pass": True},
         {"criterion": "output length 10-30 % and 30-300 words", "value": a.length_ok, "target": "all texts",

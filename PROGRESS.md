@@ -13,7 +13,7 @@ personal contact details.
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
 | 3b | `03b_style_finetune.ipynb`: continue `arabart_ft` on filtered oddadmix pairs | **done (2026-10-18)**: `models/arabart_ft_style`, dev R1 0.360 (decision 32) |
 | 4b | 04 for the style model | **done (2026-10-19)**: torch INT8 → `models/arabart_ft_style_cpu`, 531 MB, median 12.8 s on 2 vCPUs (decision 34) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.376** strict / 0.438 XL-Sum-style, BERTScore 0.751, other automatic criteria pass. INT8 output varies with the CPU type (decision 37). Human-evaluation sheets written (100 items), waiting for raters |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.438** XL-Sum-style (acceptance metric, decision 38; CI 0.429–0.448, passes) / 0.376 strict, BERTScore 0.751, other automatic criteria pass. INT8 output varies with the CPU type (decision 37). Human-evaluation sheets written (100 items), waiting for raters |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -498,6 +498,13 @@ personal contact details.
       not checked for attribution; NEWS-0101 "المدير السابق للمتحف" title; first-person quote text without quote
       marks in the fill (ORG-0065 "مسقط رأسي هلسنكي").
     Human-eval sheets written for this run (100 items, `logs/05_evaluate/human_eval/`); report.md / report.json updated.
+38. **Project lead approved the XL-Sum-style ROUGE-1 as the acceptance metric (2026-10-20).** Decision 30's
+    stemmed score (`rouge1_xlsum`, Snowball, as in the XL-Sum authors' scorer) now decides "ROUGE-1 F1 > 0.40":
+    `evaluate.acceptance.rouge1_metric: xlsum`; `BE.acceptance` puts pass/fail on it and lists the unstemmed
+    score as a "reported" row (every report still shows both; `rouge1_metric: strict` restores the old table).
+    On the current run (decision 37, INTERIM references) 0.438 (CI 0.429–0.448) > 0.40: passes, with the whole
+    CI above the target; still subject to the reference review and the reference-machine run. The Drive
+    `report.md` predates this and shows the old table until 05's acceptance/report cells are re-run.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
@@ -551,7 +558,7 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - Team: human review of all 240 reference drafts (guideline §1a/§6), then `benchmark-validate --strict`,
   `approved_only: true`, re-run 05 for final (non-interim) numbers.
 - Two raters fill `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
-- Project lead: approve or reject the XL-Sum-style ROUGE (decision 30), AI-drafted references, oddadmix (no
+- Project lead: XL-Sum-style ROUGE approved (decision 38); still to approve: AI-drafted references, oddadmix (no
   license, research use), the extractive length fill (~47 % of words after the faithfulness filter).
 - Official numbers from the reference machine: the INT8 model's output depends on the CPU (decision 37), so run 05's
   primary there (or on one fixed CPU type) and re-tune post-processing on dev outputs from the same machine.

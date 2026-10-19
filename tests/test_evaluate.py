@@ -92,9 +92,13 @@ def test_benchmark_scoring_and_acceptance():
     assert len(BE.score_outputs(outs, r_app, {"n1": SRC, "o1": SRC})) == 1
     summ = BE.summary_table(sc)
     lat = BE.latency_table(outs)
-    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, lat, EV["acceptance"])}
+    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, lat, {**EV["acceptance"], "rouge1_metric": "strict"})}
     assert acc["ROUGE-1 F1"]["pass"] and acc["median latency 300-700 words (cpu)"]["pass"]
     assert acc["human scores >= 4"]["pass"] is None
+    xl = summ.assign(rouge1=0.3, rouge1_xlsum=0.45)
+    acc = {r["criterion"]: r for r in BE.acceptance("s", xl, lat, EV["acceptance"])}
+    assert acc["ROUGE-1 F1, XL-Sum-style Snowball stemming"]["pass"]
+    assert acc["ROUGE-1 F1, unstemmed (reported)"]["pass"] is None and "ROUGE-1 F1" not in acc
 
 
 def test_run_batch_lead_resumable(tmp_path):
@@ -130,8 +134,12 @@ def test_snowball_rouge_matches_clitic_forms_and_is_secondary():
     sc = BE.score_outputs(outs, BE.reference_table(refs, False), {"n1": ref}, secondary_stem="snowball")
     assert sc.rouge1_xlsum.iloc[0] > sc.rouge1.iloc[0]
     summ = BE.summary_table(sc)
-    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, BE.latency_table(outs), EV["acceptance"])}
+    strict = {**EV["acceptance"], "rouge1_metric": "strict"}
+    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, BE.latency_table(outs), strict)}
     sec = acc["ROUGE-1 F1, XL-Sum-style Snowball stemming (secondary)"]
     assert sec["pass"] is None and sec["value"] == summ[summ.subset == "all"].rouge1_xlsum.iloc[0]
-    assert acc["ROUGE-1 F1"]["value"] == summ[summ.subset == "all"].rouge1.iloc[0]          # pass/fail stays on the strict score
+    assert acc["ROUGE-1 F1"]["value"] == summ[summ.subset == "all"].rouge1.iloc[0]          # pass/fail on the strict score
+    acc = {r["criterion"]: r for r in BE.acceptance("s", summ, BE.latency_table(outs), EV["acceptance"])}
+    assert acc["ROUGE-1 F1, XL-Sum-style Snowball stemming"]["value"] == sec["value"]       # approved metric (decision 38)
+    assert acc["ROUGE-1 F1, unstemmed (reported)"]["value"] == summ[summ.subset == "all"].rouge1.iloc[0]
     assert "rouge1_xlsum" not in BE.score_outputs(outs, BE.reference_table(refs, False), {"n1": ref})

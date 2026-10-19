@@ -250,6 +250,7 @@ evaluate:
   ablation_strategies: [segmentwise, hybrid]
   acceptance:                 # proposal acceptance criteria
     min_rouge1: 0.40
+    rouge1_metric: xlsum        # XL-Sum-style stemmed ROUGE-1 decides; strict still reported (project lead, 2026-10-20, PROGRESS 38)
     min_length_ok: 1.0
     max_median_s_300_700: 15
     max_median_s_all: 25
