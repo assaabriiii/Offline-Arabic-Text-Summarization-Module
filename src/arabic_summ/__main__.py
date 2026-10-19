@@ -51,6 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("spec", type=Path)
     p.add_argument("out", type=Path)
 
+    p = sub.add_parser("summarize-refinish", help="re-apply the post-processing to a keep_parts run (new JSONL)")
+    p.add_argument("spec", type=Path)
+    p.add_argument("inp", type=Path)
+    p.add_argument("out", type=Path)
+
     p = sub.add_parser("summarize", help="summarize Arabic text offline (file, or stdin with '-')")
     p.add_argument("--model-dir", required=True, type=Path)
     p.add_argument("--input", default="-", help="UTF-8 text file, or - for stdin")
@@ -90,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
         from .eval import run_batch
 
         return run_batch.run(read_json(args.spec), args.out)
+    if args.cmd == "summarize-refinish":
+        from .eval import run_batch
+
+        return run_batch.refinish(read_json(args.spec), args.inp, args.out)
     if args.cmd == "onnx-export":
         from .optimize import onnx_export as X
 

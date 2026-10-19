@@ -46,9 +46,12 @@ FAITH_VARIANTS = {
 # second round (PROGRESS 37): speaker window, fill cleanup; on top of the PROGRESS 36 setting
 _D36 = {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.3,
         "fill_skip_questions": False, "fill_fix_quotes": False, "fill_strip_leads": False,
+        "fill_strip_leads_extended": False, "fill_skip_glued_headings": False, "fill_skip_first_person": "none",
+        "fill_skip_pronoun_speaker": False,
         "faithfulness": {**_ON, "max_support_sentences": 1, "attribution_single_source": True,
                          "attribution_window": 2, "attribution_name_match": False,
-                         "attribution_latest_speaker": False}}
+                         "attribution_latest_speaker": False, "attribution_pronoun": False,
+                         "attribution_latest_share": False}}
 _CLEAN = {"fill_skip_questions": True, "fill_fix_quotes": True, "fill_strip_leads": True}
 ROUND2_VARIANTS = {
     "d36": _D36,
@@ -111,3 +114,23 @@ def score_row(run: str, variant: str, ids: Sequence[str], hyps: Sequence[str], l
             "rougeL": round(st.mean(x["rougeL"] for x in r), 4), "rouge1_xlsum": round(st.mean(xl), 4),
             "length_ok": round(st.mean(length_ok), 3), "filled_share": round(st.mean(filled_share), 3),
             "numbers_ok": round(f["numbers_ok_share"], 3), "novel_rate": round(f["novel_rate"], 3)}
+# third round (PROGRESS 38): pronoun speakers, first-person / glued-heading fill sentences, more lead cleanup;
+# on top of the PROGRESS 37 setting
+_D37 = ROUND2_VARIANTS["clean+name+win3+latest"]
+_EXT = {"fill_strip_leads_extended": True, "fill_skip_glued_headings": True}
+_PRON = {"faithfulness": {**_D37["faithfulness"], "attribution_pronoun": True}}
+ROUND3_VARIANTS = {
+    "d37": _D37,
+    "pronoun": {**_D37, **_PRON},
+    "first_person": {**_D37, "fill_skip_first_person": "singular"},
+    "first_person_all": {**_D37, "fill_skip_first_person": "all"},
+    "leads": {**_D37, **_EXT},
+    "all": {**_D37, **_EXT, **_PRON, "fill_skip_first_person": "singular"},
+    "all+plural": {**_D37, **_EXT, **_PRON, "fill_skip_first_person": "all"},
+    "fill_pronoun": {**_D37, "fill_skip_pronoun_speaker": True},
+    "all+fill_pronoun": {**_D37, **_EXT, **_PRON, "fill_skip_first_person": "singular", "fill_skip_pronoun_speaker": True},
+    "all+fill_pronoun+share": {**_D37, **_EXT, "fill_skip_first_person": "singular", "fill_skip_pronoun_speaker": True,
+                               "faithfulness": {**_PRON["faithfulness"], "attribution_latest_share": True}},
+    "all+plural+fill_pronoun": {**_D37, **_EXT, **_PRON, "fill_skip_first_person": "all",
+                                "fill_skip_pronoun_speaker": True},
+}

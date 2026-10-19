@@ -131,3 +131,23 @@ def test_speaker_named_nearby_and_described_earlier_passes():
     assert "attribution" in chk.reasons("يقول رئيس مجموعة وزراء مالية أوروبا إن لندن تمثل مركزا ماليا أساسيا لا غنى عنه.")
     off = FaithfulnessChecker(src, {**FC, "attribution_name_match": False})
     assert "attribution" in off.reasons("يقول الخبير الاقتصادي البريطاني جيرارد ليونز، إن \"المدن الأوروبية ستجد صعوبة في إزاحة لندن كمركز مالي\".")
+
+
+def test_pronoun_speaker_must_follow_the_sources_speaker():
+    src = ["قالت الناشطة كارولين كريادو بيريز إن النساء يعملن في قطاعات الخدمات.",
+           "وقالت مسعفات يعملن في مستشفيات إنهن يجبرن على العمل بمعدات غير مناسبة.",
+           "وقال العقيد قاسم سعد الدين إن الفصائل لن تشارك في المحادثات.",
+           "وأكد لبي بي سي أنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات."]
+    chk = FaithfulnessChecker(src, FC)
+    rudd = "تقول السياسية آمبر رود إن الأزمة لا تؤخذ على محمل الجد."
+    # "تقول إن ..." after Rudd: the source gives the claim to the paramedics
+    assert "attribution" in chk.reasons("وتقول إنهن يجبرن على العمل بمعدات غير مناسبة.", [rudd])
+    assert "attribution" in chk.reasons("وأكد أنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات.", [])   # opens the summary
+    said = "قال العقيد قاسم سعد الدين إن الفصائل لن تشارك في المحادثات."
+    assert chk.reasons("وأكد أنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات.", [said]) == []
+    # a masculine verb after a woman's sentence is another person; the addressee ("لبي بي سي") is no speaker
+    she = "قالت الناشطة كارولين كريادو بيريز إن النساء يعملن في قطاعات الخدمات."
+    assert "attribution" in chk.reasons("وأكد أنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات.", [she])
+    assert chk.reasons("وقال رئيس الائتلاف إنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات.") == ["attribution"]
+    off = FaithfulnessChecker(src, {**FC, "attribution_pronoun": False})
+    assert off.reasons("وأكد أنه لا يمكن للمعارضة الذهاب إلى جنيف دون ضمانات.", []) == []

@@ -25,6 +25,12 @@ Checks (`pipeline.faithfulness`; a threshold of null switches a check off):
                  speaker named in the speaker phrase of a nearby support sentence and described earlier
                  passes; with `attribution_latest_speaker` the latest speaker phrase at or before the
                  support sentence (within the window) must share a word with the speaker
+                 (`attribution_latest_share`: `attribution` of the speaker's words must be in that person's
+                 descriptions, so "المتحدث باسم" alone doesn't match another spokesman); with
+                 `attribution_pronoun` a sentence opening with a speech verb and no speaker ("ويضيف أن ...",
+                 "تقول: ...") must follow a summary sentence, and the latest source speaker before its
+                 support sentence must be the summary's latest speaker (or, without one, be mentioned in it),
+                 with the same verb gender as that speaker's sentence
 """
 
 from __future__ import annotations
@@ -53,7 +59,11 @@ _NEG = _norm("ليس ليست ليسوا ليسا لسن لست لسنا لم ل
 _NOT_NEG_NEXT = _norm("يزال تزال يزالون تزالان يزلن زال زالت سيما بد")
 _SPEECH = _norm("""يقول تقول قال قالت أضاف أضافت يضيف تضيف أكد أكدت يؤكد تؤكد ذكر ذكرت أوضح أوضحت
                    أشار أشارت صرح صرحت يرى ترى حذر حذرت يحذر تحذر""")
-_THAT = _norm("إن أن")
+_THAT = _norm("إن أن إنه إنها إنهم إنهن إننا إنني أنه أنها أنهم أنهن أننا أنني")   # "قالت إنها ..." has no speaker
+# a speech verb followed by its addressee or a filler, not by its speaker: "قالت لصندوق الأمم المتحدة ...",
+# "ويضيف في حوار مع بي بي سي إنه", "وأضاف قائلا:" (PROGRESS 38)
+_NOT_SPEAKER = _norm("في مع خلال عن أمام لبي لصحيفة لصندوق لوكالة لمنظمة لهيئة لموقع لقناة لشبكة لنا له لها لهم "
+                     "قائلا قائلة قائلين قائلات مضيفا مضيفة")
 _SPEAKER_MAX = 8
 
 
@@ -113,6 +123,21 @@ def _negations(tokens: Sequence[str]) -> list[set[str]]:
     return out
 
 
+def _verb_gender(tokens: Sequence[str]) -> str | None:
+    """'f' / 'm' of the first speech verb ("تقول", "قالت" / "يقول", "قال"), None without one."""
+    for t in tokens:
+        v = _strip_conj(t, _SPEECH)
+        if v is not None:
+            return "f" if v.startswith("ت") or v.endswith("ت") else "m"
+    return None
+
+
+def _pronoun_speaker(tokens: Sequence[str]) -> bool:
+    """The sentence opens with a speech verb whose speaker is only a pronoun ("ويضيف أن", "تقول: \"...")."""
+    return len(tokens) > 1 and _strip_conj(tokens[0], _SPEECH) is not None \
+        and (tokens[1] in _THAT or tokens[1] in _QUOTE_CHARS)
+
+
 def _speaker(tokens: Sequence[str]) -> tuple[list[str], list[str]]:
     """(speaker tokens, remaining tokens) for "يقول/قالت/أضاف X إن ..." sentences."""
     for i, t in enumerate(tokens):
@@ -123,6 +148,8 @@ def _speaker(tokens: Sequence[str]) -> tuple[list[str], list[str]]:
                 and tokens[j] not in _THAT and tokens[j] != ".":
             j += 1
         spk = [x for x in tokens[i + 1:j] if _is_word(x)]
+        if spk and (spk[0] in _NOT_SPEAKER or spk[0].startswith("لل")):
+            spk = []
         if spk:
             return spk, list(tokens[:i]) + list(tokens[j:])
     return [], list(tokens)
@@ -162,6 +189,17 @@ class FaithfulnessChecker:
         lo = 0 if w is None else max(0, i - int(w))
         return next((self.speakers[j] for j in range(i, lo - 1, -1) if self.speakers[j]), set())
 
+    def _described(self, latest: set[str], i: int) -> set[str]:
+        """All speaker phrases at or before `i` that share a word with `latest`: the person's full description
+        ("كايل رينز، المتحدث باسم الجيش الأمريكي") when the latest phrase is only the name ("وأوضح رينز")."""
+        return set().union(latest, *(sp for sp in self.speakers[:i + 1] if sp & latest))
+
+    def speaker_known(self, i: int, summary: Sequence[str]) -> bool:
+        """Source sentence `i` has a pronoun speaker ("وأوضح أن ..."): its latest named speaker (within the
+        window) occurs in `summary`, so the reader knows who speaks (length fill, PROGRESS 38)."""
+        latest = self._latest_speaker(i, self.cfg.get("attribution_window", 2))
+        return bool(latest and latest & set().union(*(_content(_tokens(s)) for s in summary)))
+
     def _named_nearby(self, ss: set[str], chosen: list[int], w) -> bool:
         """`attribution_name_match`: the speaker is named by a rare word (a name, in <= 20% of the source
         sentences) in the latest speaker phrase at or before a support sentence, within the window
@@ -175,7 +213,8 @@ class FaithfulnessChecker:
         before = set().union(*self.sets[:max(chosen) + 1])
         return len(ss & before) / len(ss) >= self.cfg["attribution"]
 
-    def reasons(self, sentence: str) -> list[str]:
+    def reasons(self, sentence: str, before: Sequence[str] = ()) -> list[str]:
+        """Failed checks; `before`: the summary sentences kept so far (context of a pronoun speaker)."""
         c = self.cfg
         toks = _tokens(sentence)
         spk, rest = _speaker(toks)
@@ -213,16 +252,31 @@ class FaithfulnessChecker:
                 if bg and sum(b in self.bigrams for b in bg) / len(bg) < c["quotes"]:
                     out.append("quote")
                     break
+        w = c.get("attribution_window", 2)
+        if c.get("attribution") is not None and c.get("attribution_pronoun") and not spk and chosen \
+                and _pronoun_speaker(toks):
+            prior = [_tokens(b) for b in before]
+            named = [t for t in prior if _speaker(t)[0]]
+            last = _content(named[-1]) if named else set()     # whole sentence: the name may follow a long title
+            latest = self._latest_speaker(chosen[0], w)
+            if not before:                                   # "وقال إن ..." opening the summary: speaker unknown
+                out.append("attribution")
+            elif named and _verb_gender(toks) != _verb_gender(named[-1]):
+                out.append("attribution")                    # "تقول بتول ..." then "يقول: ...": another person
+            elif latest and not latest & (last or set().union(*(_content(t) for t in prior))):
+                said = _content(_speaker(named[-1])[0]) if named else set()
+                if not (said and len(said & self._described(latest, chosen[0])) / len(said) >= c["attribution"]):
+                    out.append("attribution")                # the reader would take it for someone else
         if c.get("attribution") is not None and spk and chosen:
             ss = _content(spk)
-            w = c.get("attribution_window", 2)
             near = set().union(*(self.sets[j] for i in chosen
                                  for j in range(0 if w is None else max(0, i - int(w)), i + 1)))
             latest = self._latest_speaker(chosen[0], w) if c.get("attribution_latest_speaker") else set()
             if ss and len(ss & near) / len(ss) < c["attribution"] and not self._named_nearby(ss, chosen, w):
                 out.append("attribution")
-            elif ss and latest and not ss & latest:      # the source gives the claim to someone else
-                out.append("attribution")
+            elif ss and latest and (len(ss & self._described(latest, chosen[0])) / len(ss) < c["attribution"]
+                                    if c.get("attribution_latest_share") else not ss & latest):
+                out.append("attribution")                # the source gives the claim to someone else
             elif ss and c.get("attribution_single_source") and len(claim) >= 2 \
                     and len(claim & self.sets[chosen[0]]) / len(claim) < c["min_support"]:
                 out.append("attribution")
@@ -235,7 +289,7 @@ def filter_sentences(sentences: Sequence[str], source_sentences: Sequence[str],
     chk = FaithfulnessChecker(source_sentences, cfg)
     kept, rejected = [], []
     for s in sentences:
-        r = chk.reasons(s)
+        r = chk.reasons(s, kept)
         if r:
             rejected.append({"sentence": s, "reasons": r})
         else:

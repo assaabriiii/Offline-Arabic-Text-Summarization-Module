@@ -136,6 +136,10 @@ pipeline:
     fill_skip_questions: true  # skip rhetorical questions ("هل على معتادي السهر ...؟")
     fill_strip_leads: true   # remove datelines (first 3 sentences) and quoted crossheads at a sentence start
     fill_fix_quotes: true    # close / open a quote split across sentences when a speaker is named, else skip
+    fill_strip_leads_extended: true  # also the BBC widget text, list bullets, datelines after "التاريخ:" (PROGRESS 38)
+    fill_skip_glued_headings: true   # "اضطراب الساعة البيولوجية إنه ..." (a heading XL-Sum joined to the sentence)
+    fill_skip_first_person: singular # none | singular ("التقيت بأمهات ...") | all (also "نحن", an agency's voice)
+    fill_skip_pronoun_speaker: true  # "وأوضح أن ..." unless the source's speaker is named in the summary
   faithfulness:              # drop unfaithful model sentences, the fill replaces them (PROGRESS 35-36; summarize/faithful.py)
     enabled: true
     min_support: 0.8         # share of the claim's content stems found in its best support sentences
@@ -148,6 +152,7 @@ pipeline:
     attribution_name_match: true       # or: named in the latest nearby speaker phrase, described earlier
     attribution_latest_speaker: true   # reject if the latest speaker phrase before the claim names someone else
     attribution_single_source: true    # an attributed claim must come from one source sentence
+    attribution_pronoun: true          # "ويضيف أن ..." must follow the summary sentence naming the source's speaker
   dedup_sentence_threshold: 0.7
   merge: none                # none | abstractive  (final abstractive re-summarization pass)
 

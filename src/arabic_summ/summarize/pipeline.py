@@ -32,10 +32,10 @@ from ..text.normalize import NormalizationPolicy, normalize
 from ..text.segment import Sentence, split_sentences
 from ..text.words import count_words
 from . import extractive
-from .faithful import filter_sentences
+from .faithful import FaithfulnessChecker, filter_sentences
 from .length import LengthPolicy, allocate, token_bounds
-from .postprocess import (covered, dedup_sentences, drop_unfinished, fix_quotes, is_complete, is_question, join,
-                          strip_lead, to_sentences, trim_to_words)
+from .postprocess import (covered, dedup_sentences, drop_unfinished, first_person, fix_quotes, glued_heading,
+                          is_complete, is_meta, is_question, join, pronoun_speaker, strip_lead, to_sentences, trim_to_words)
 
 STRATEGIES = ("direct", "segmentwise", "hybrid", "extractive", "lead")
 
@@ -84,6 +84,12 @@ class Summarizer:
         self.fill_skip_questions = bool(lc.get("fill_skip_questions", False))
         self.fill_fix_quotes = bool(lc.get("fill_fix_quotes", False))
         self.fill_strip_leads = bool(lc.get("fill_strip_leads", False))
+        self.fill_strip_leads_extended = bool(lc.get("fill_strip_leads_extended", False))
+        self.fill_skip_glued_headings = bool(lc.get("fill_skip_glued_headings", False))
+        self.fill_skip_pronoun_speaker = bool(lc.get("fill_skip_pronoun_speaker", False))
+        self.fill_skip_first_person = lc.get("fill_skip_first_person", "none")
+        if self.fill_skip_first_person not in ("none", "singular", "all"):
+            raise ValueError("length_control.fill_skip_first_person must be none|singular|all")
         self.faith = dict(p.get("faithfulness") or {})
 
     # ------------------------------------------------------------------ public
@@ -219,7 +225,11 @@ class Summarizer:
         and headings without end punctuation are skipped (`fill_skip_titles`; 05 review: page titles
         glued on), as are rhetorical questions (`fill_skip_questions`); datelines / quoted crossheads
         at the start of a sentence are removed (`fill_strip_leads`) and pieces of multi-sentence quotes
-        repaired or skipped (`fill_fix_quotes`) first (PROGRESS 37). If no whole sentence fits, the first words of the best uncovered one are added, as
+        repaired or skipped (`fill_fix_quotes`) first (PROGRESS 37); `fill_strip_leads_extended` also removes the BBC
+        widget text and list bullets and a dateline after a press release's metadata lines, and headings glued to a
+        sentence (`fill_skip_glued_headings`), first-person sentences outside quotes (`fill_skip_first_person`) and
+        sentences whose speaker is only a pronoun ("وأوضح أن ...", `fill_skip_pronoun_speaker`) unless the speaker the
+        source gives them is named in the summary are skipped (PROGRESS 38). If no whole sentence fits, the first words of the best uncovered one are added, as
         `trim_to_words` does. Returns (sentences, words added)."""
         out = list(summary)
         n0 = n = count_words(join(out))
@@ -232,14 +242,17 @@ class Summarizer:
         if self.fill_number_bonus:          # on the original sentence: a dateline's date counts
             scores = scores * [1 + self.fill_number_bonus * any(ch.isdigit() for ch in t) for t in texts]
         if self.fill_strip_leads:
-            texts = [strip_lead(t, dateline=k < 3) for k, t in enumerate(texts)]
+            ext = self.fill_strip_leads_extended
+            texts = [strip_lead(t, dateline=k < 3 or (ext and k > 0 and is_meta(texts[k - 1])), extended=ext)
+                     for k, t in enumerate(texts)]
         if self.fill_fix_quotes:
             texts = [fix_quotes(t) or "" for t in texts]      # "" = skipped (no words, never fits)
         order = sorted(range(len(texts)), key=lambda i: -scores[i])
+        chk = FaithfulnessChecker([s.text for s in sents], self.faith) if self.fill_skip_pronoun_speaker else None
         for i in order:
             if n >= goal:
                 break
-            if not self._fill_ok(texts[i]):
+            if not self._fill_ok(texts[i]) or (chk and pronoun_speaker(texts[i]) and not chk.speaker_known(i, out)):
                 continue
             w = count_words(texts[i])
             if n + w <= hi and not covered(texts[i], out, thr):
@@ -247,11 +260,14 @@ class Summarizer:
                 n += w
         if n < goal:
             rest = [texts[i] for i in order if not covered(texts[i], out, thr)]
-            rest = [t for t in rest if self._fill_ok(t)] or rest
+            rest = [t for t in rest if self._fill_ok(t) and not (chk and pronoun_speaker(t))] or rest
             if rest:
                 out = trim_to_words(out + rest[:1], hi, goal)
         return out, count_words(join(out)) - n0
 
     def _fill_ok(self, text: str) -> bool:
+        fp = self.fill_skip_first_person
         return bool(text) and not ((self.fill_skip_titles and not is_complete(text))
-                                   or (self.fill_skip_questions and is_question(text)))
+                                   or (self.fill_skip_questions and is_question(text))
+                                   or (self.fill_skip_glued_headings and glued_heading(text))
+                                   or (fp != "none" and first_person(text, plural=fp == "all")))

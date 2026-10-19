@@ -39,8 +39,10 @@ def is_question(sentence: str) -> bool:
     return bool(re.search(r"[?؟][\"'»”)\]]*\s*$", sentence.strip()))
 
 
-_SAYS = re.compile(r"(?:^|\s)[وف]?(?:قال|قالت|قالوا|يقول|تقول|[أا]ضاف|[أا]ضافت|[أا]ضافوا|يضيف|تضيف|[أا]كد|[أا]كدت|يؤكد|"
-                   r"تؤكد|ذكر|ذكرت|[أا]وضح|[أا]وضحت|يوضح|توضح|[أا]شار|[أا]شارت|صرح|صرحت|حذر|حذرت|يشرح|تشرح)(?=[\s:،,]|$)")
+_SAY_VERBS = (r"قال|قالت|قالوا|يقول|تقول|[أا]ضاف|[أا]ضافت|[أا]ضافوا|يضيف|تضيف|[أا]كد|[أا]كدت|يؤكد|"
+              r"تؤكد|ذكر|ذكرت|[أا]وضح|[أا]وضحت|يوضح|توضح|[أا]شار|[أا]شارت|صرح|صرحت|حذر|حذرت|يشرح|تشرح")
+_SAYS = re.compile(rf"(?:^|\s)[وف]?(?:{_SAY_VERBS})(?=[\s:،,]|$)")
+_PRONOUN_SAYS = re.compile(rf"^[وف]?(?:{_SAY_VERBS})\s*(?:[أا]ن|إن|:|\"|«|“)")
 _QUOTE_PAIRS = (('"', '"'), ("«", "»"), ("“", "”"))
 _FINAL = re.compile(r"([.!?؟…]*)\s*$")
 
@@ -82,11 +84,26 @@ _DATELINE = re.compile(r"^([^.!?؟\"«»\n]{2,80}?)\s+([-–—])\s+(?=[^\s\d٠-
 _CROSSHEAD = re.compile(r"^([\"«“])[^\"«»“”]{1,40}[\"»”]\s+(?=[^\s.!?؟،,:])")
 
 
-def strip_lead(sentence: str, dateline: bool = True) -> str:
-    """Remove a dateline (`dateline`: only for the first sentences of an article; "كوفيد - 19" or
-    "التقزم – وهو ..." later on are not datelines) or a quoted crosshead from the start of a source
-    sentence (05 review: the fill added "1 تشرين الأول/ أكتوبر 2026 - إن ..." and '"مهمة مجتمع" وعوضا ...')."""
+# BBC page widget left in XL-Sum articles ("... الداخلية. مواضيع قد تهمك نهاية وتأتي هذه الأخبار ..."), a list
+# bullet ("- امرأة واحدة من كل أربع ...")
+_WIDGET = re.compile(r"^(?:مواضيع قد تهمك نهاية\s+|[-–—•]\s+)")
+# metadata line of a press release before its dateline ("التاريخ:", "[بيان صحفي]")
+_META = re.compile(r"^(?:\[[^\]]{1,30}\]|[^.!?؟]{1,25}:)$")
+
+
+def is_meta(sentence: str) -> bool:
+    return bool(_META.match(sentence.strip()))
+
+
+def strip_lead(sentence: str, dateline: bool = True, extended: bool = False) -> str:
+    """Remove a dateline (`dateline`: only for the first sentences of an article or the one after a
+    press release's metadata lines; "كوفيد - 19" or "التقزم – وهو ..." later on are not datelines) or a
+    quoted crosshead from the start of a source sentence (05 review: the fill added "1 تشرين الأول/ أكتوبر
+    2026 - إن ..." and '"مهمة مجتمع" وعوضا ...'); `extended` also removes the BBC widget text and list
+    bullets (PROGRESS 38)."""
     s = sentence.strip()
+    if extended:
+        s = _WIDGET.sub("", s)
     m = _DATELINE.match(s) if dateline else None
     if m and len(m.group(1).split()) <= 8 and not _SAYS.search(m.group(1)) and (re.search(r"[\d٠-٩(\[،,/]", m.group(1))
                                                or m.group(2) != "-" and len(m.group(1).split()) <= 2):
@@ -95,6 +112,33 @@ def strip_lead(sentence: str, dateline: bool = True) -> str:
     if m and len(s[:m.end()].split()) <= 4:
         s = s[m.end():]
     return s
+
+
+# a heading glued to the next sentence by XL-Sum's line joining: "اضطراب الساعة البيولوجية إنه سيناريو ...";
+# narrow on purpose (definite noun phrase only): "خبراء يقولون إن" / "بعض العلماء يقولون إن" are sentences
+_GLUED_HEAD = re.compile(r"^[^\s.،,:;!?؟\"«»()وف][^\s.،,:;!?؟\"«»()]*(?:\s+ال[^\s.،,:;!?؟\"«»()]+){1,3}\s+إن(?:ه|ها|هم|هن)?\s")
+
+
+def pronoun_speaker(sentence: str) -> bool:
+    """Opens with a speech verb and no speaker ("وأوضح أن ...", "تقول: ..."): out of its article context the
+    reader can't tell who speaks (PROGRESS 38)."""
+    return bool(_PRONOUN_SAYS.match(sentence.strip()))
+
+
+def glued_heading(sentence: str) -> bool:
+    return bool(_GLUED_HEAD.match(sentence.strip()))
+
+
+_FIRST_1 = r"أنا|انا|إنني|انني|أنني|لكنني|لدي|عندي|التقيت|أعتقد|اعتقد|أريد|اريد"
+_FIRST_PL = r"|نحن|إننا|اننا|أننا|لكننا|نعتقد|نريد"
+_QUOTED = re.compile(r"«[^»]*»|\"[^\"]*\"|“[^”]*”")
+
+
+def first_person(sentence: str, plural: bool = False) -> bool:
+    """First person outside quotes ("وفي مركز للنساء والفتيات، التقيت بأمهات ...", a blog's author): out of
+    context in a summary (05 review, ORG-0065). `plural` also counts "نحن / إننا" (an agency's voice)."""
+    words = _FIRST_1 + (_FIRST_PL if plural else "")
+    return bool(re.search(rf"(?:^|[\s(])[وفل]?(?:{words})(?=[\s.،,:؛!?؟]|$)", _QUOTED.sub(" ", sentence)))
 
 
 def covered(sentence: str, kept: Sequence[str], threshold: float = 0.7) -> bool:

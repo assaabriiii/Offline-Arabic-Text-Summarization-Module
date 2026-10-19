@@ -286,3 +286,29 @@ def test_fill_text_cleanup_helpers():
     assert fix_quotes("\" لم يكن شيء ليهيئني لما رأيته.") is None
     assert fix_quotes("قال كيري \"نعم\".") == "قال كيري \"نعم\"."
     assert is_question("هل علينا أن نستيقظ مبكرا؟") and not is_question("نستيقظ مبكرا.")
+
+
+def test_fill_round3_helpers():
+    from arabic_summ.summarize.postprocess import first_person, glued_heading, is_meta, pronoun_speaker, strip_lead
+    assert glued_heading("اضطراب الساعة البيولوجية إنه سيناريو معتاد.")
+    assert not glued_heading("خبراء يقولون إن النوم مهم.") and not glued_heading("وقال الوزير إنه سيحضر.")
+    assert first_person("وفي مركز للنساء، التقيت بأمهات لم يتبق لديهن شيء.")
+    assert not first_person("قالت حنين: \"كنت خائفة، أنا وحدي\".") and not first_person("نحن ممتنون للشراكة.")
+    assert first_person("نحن ممتنون للشراكة.", plural=True)
+    assert pronoun_speaker("وأوضح أن الشرطة تحقق في الحادث.") and pronoun_speaker("تقول: \"ما زلت طالبة\".")
+    assert not pronoun_speaker("وقال الوزير إن الشرطة تحقق.")
+    assert strip_lead("مواضيع قد تهمك نهاية وتأتي هذه الأخبار اليوم.", extended=True) == "وتأتي هذه الأخبار اليوم."
+    assert strip_lead("- امرأة واحدة من كل أربع نساء محرومة.", dateline=False, extended=True) == "امرأة واحدة من كل أربع نساء محرومة."
+    assert is_meta("التاريخ:") and is_meta("[بيان صحفي]") and not is_meta("وقالت الوزيرة إن البرنامج مستمر.")
+
+
+def test_fill_skips_pronoun_speaker_unless_named():
+    src = ("أعلنت الحكومة خطة جديدة لدعم المزارعين في المناطق الريفية هذا العام. "
+           "وقال وزير الزراعة سامي الخطيب إن الخطة تشمل قروضا ميسرة للمزارعين الصغار. "
+           "وأوضح أن القروض ستصرف خلال ثلاثة أشهر من تقديم الطلبات الكاملة. "
+           "ويعمل في الزراعة نحو ربع السكان في البلاد بحسب الإحصاءات الرسمية. ") * 3
+    sm = Summarizer(_cfg(fill="extractive", fill_to="target", fill_skip_pronoun_speaker=True))
+    sents = [s for s in sm.refinish(src, ["أعلنت الحكومة خطة جديدة لدعم المزارعين."], 0.3, "direct").summary.split(". ")]
+    if any(s.startswith("وأوضح أن") for s in sents):
+        k = next(i for i, s in enumerate(sents) if s.startswith("وأوضح أن"))
+        assert any("الخطيب" in s for s in sents[:k])

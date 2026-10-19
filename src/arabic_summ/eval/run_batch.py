@@ -6,6 +6,9 @@ in the output file are skipped. Spec JSON:
    tokens_per_word, threads, config_paths, root, items: [{sample_id, domain, text}]}
 Optional: `keep_parts: true` also stores each model call's raw output (dev-set tuning of the
 post-processing without regenerating), `pipeline: {...}` overrides config keys of the pipeline section.
+
+`refinish(spec, in_path, out_path)` re-applies the current post-processing to a run made with `keep_parts`
+(same model outputs, generation time kept; PROGRESS 38) and writes a new file.
 """
 
 from __future__ import annotations
@@ -49,6 +52,26 @@ def run(spec: Mapping, out_path: str | Path) -> int:
                    "device": getattr(backend, "device", "cpu") if backend else "cpu", "utc": utc_now()}
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()
+    return 0
+
+
+def refinish(spec: Mapping, in_path: str | Path, out_path: str | Path) -> int:
+    from ..config import load_config
+    from ..summarize.pipeline import Summarizer
+
+    over = {"paths": {"root": spec["root"]}}
+    if spec.get("pipeline"):
+        over["pipeline"] = spec["pipeline"]
+    sm = Summarizer(load_config(*spec["config_paths"], overrides=over), tokens_per_word=spec.get("tokens_per_word"))
+    texts = {r["sample_id"]: r["text"] for r in spec["items"]}
+    recs = [json.loads(l) for l in Path(in_path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    if any("parts" not in r for r in recs):
+        raise ValueError(f"{in_path}: records without `parts` (run with keep_parts: true)")
+    with Path(out_path).open("w", encoding="utf-8") as f:
+        for r in recs:
+            res = sm.refinish(texts[r["sample_id"]], [p["output"] for p in r["parts"]], r["ratio"], r["strategy"])
+            new = {k: v for k, v in res.to_dict().items() if k not in ("parts", "seconds", "n_parts", "n_model_calls")}
+            f.write(json.dumps({**r, **new, "refinished_utc": utc_now()}, ensure_ascii=False) + "\n")
     return 0
 
 

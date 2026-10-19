@@ -101,6 +101,23 @@ def test_benchmark_scoring_and_acceptance():
     assert acc["ROUGE-1 F1, unstemmed (reported)"]["pass"] is None and "ROUGE-1 F1" not in acc
 
 
+def test_refinish_reapplies_post_processing(tmp_path):
+    items = [{"sample_id": "N0", "domain": "news", "text": SRC}]
+    spec = {"system": "s", "variant": None, "strategy": "direct", "ratio": 0.2, "config_paths": ["configs/default.yaml"],
+            "root": str(tmp_path), "items": items}
+    sp, inp, out = tmp_path / "spec.json", tmp_path / "in.jsonl", tmp_path / "out.jsonl"
+    sp.write_text(json.dumps(spec, ensure_ascii=False))
+    rec = {"system": "s", "sample_id": "N0", "domain": "news", "summary": "old", "strategy": "direct", "ratio": 0.2,
+           "seconds": {"total": 5.0}, "device": "cpu", "parts": [{"output": SRC.split(".")[0] + "."}]}
+    inp.write_text(json.dumps(rec, ensure_ascii=False) + "\n")
+    env = {**os.environ, "PYTHONPATH": "src"}
+    r = subprocess.run([sys.executable, "-m", "arabic_summ", "summarize-refinish", str(sp), str(inp), str(out)],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr[-2000:]
+    new = json.loads(out.read_text())
+    assert new["summary"] != "old" and new["output_words"] > 0 and "refinished_utc" in new and new["seconds"] == {"total": 5.0} and new["parts"]
+
+
 def test_run_batch_lead_resumable(tmp_path):
     items = [{"sample_id": f"N{i}", "domain": "news", "text": SRC} for i in range(3)]
     spec = {"system": "lead", "variant": None, "strategy": "lead", "ratio": 0.2, "config_paths": ["configs/default.yaml"],

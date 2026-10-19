@@ -506,6 +506,41 @@ personal contact details.
     CI above the target; still subject to the reference review and the reference-machine run. The Drive
     `report.md` predates this and shows the old table until 05's acceptance/report cells are re-run.
 
+39. **Third filter / fill round, on the dev set (2026-10-20).** Fixes for decision 37's open points
+    (`dev_tune.ROUND3_VARIANTS`, refinish of the 90 dev raw outputs, Intel):
+    - **Pronoun speakers** (`attribution_pronoun`): a model sentence opening with a speech verb and no speaker
+      ("ويضيف أن ...", "تقول: ...") is rejected if it opens the summary, if its verb gender differs from the
+      summary's latest named speaker ("تقول بتول ..." then "يقول: ..."), or if the latest source speaker before its
+      support sentence isn't that speaker (or, without one, isn't mentioned in the summary). Speaker parsing fixed
+      on the way: "قالت إنها ..." has no speaker (the speaker phrase used to swallow the claim), an addressee or
+      filler is no speaker ("قالت لصندوق الأمم المتحدة", "ويضيف في حوار مع بي بي سي", "وأضاف قائلا"), and the
+      summary's speaker is matched on the whole sentence (a name after a long title).
+    - **Fill**: skips sentences whose speaker is only a pronoun ("وأوضح أن ...") unless the source's speaker is
+      named in the summary (`fill_skip_pronoun_speaker`), first-person sentences outside quotes ("التقيت بأمهات",
+      `fill_skip_first_person: singular`; "all" also counts "نحن", an agency's voice: same on dev, not chosen),
+      headings glued to a sentence ("اضطراب الساعة البيولوجية إنه ...", narrow pattern, `fill_skip_glued_headings`);
+      removes the BBC widget text "مواضيع قد تهمك نهاية" (111 occurrences in the 330 texts), list bullets, and
+      datelines after a press release's "التاريخ:" / "[بيان صحفي]" lines (`fill_strip_leads_extended`).
+    | dev variant (90 texts) | R1 | R1 xlsum | R2 | rejected / text |
+    |---|---|---|---|---|
+    | decision 37 | 0.3791 | 0.4345 | 0.1981 | 1.74 |
+    | + pronoun-speaker check | 0.3792 | 0.4346 | 0.1982 | 1.76 |
+    | + fill cleanup (leads, headings, first person) | 0.3791 | 0.4346 | 0.1983 | 1.76 |
+    | **+ fill pronoun speakers (selected)** | **0.3778** | **0.4336** | 0.1973 | 1.76 |
+    | + latest speaker by description share (`attribution_latest_share`) | 0.3776 | 0.4335 | 0.1974 | 1.80 |
+    The fill rule costs 0.0013 R1: the skipped sentences are informative but misattributed out of context (NEWS-0142
+    "وتوضح ..." is Criado Perez's, the summary's last speaker is Amber Rudd; NEWS-0139 Rowley never named). The
+    description-share variant drops the correct Lyons / Criado Perez sentences again (their full description isn't
+    in a speaker phrase), so it stays off. Diagnosis on the decision-37 benchmark raw outputs (not tuned on):
+    37 of 240 summaries change, R1 0.3763 -> 0.3764, xlsum 0.4382 -> 0.4393; 24 model sentences newly rejected, 3
+    newly kept. Newly caught real misattributions: NEWS-0072 Miliband's statement given to Nick Clegg, NEWS-0147
+    Navalny's claim given to Putin ("يقول بوتين إنه ..."), NEWS-0092 the Scottish environment agency -> "هيئة الصحة
+    البريطانية", NEWS-0106 the FSA spokesman's statement -> "رئيس الائتلاف"; dangling "وقال إن ..." at a summary's
+    start (NEWS-0041/43/47/55/83). Newly kept: NEWS-0130 (2), NEWS-0009 (correct). Pronoun model sentences in the
+    240 summaries 29 -> 10 (the rest follow the right speaker). Still missed: NEWS-0034's first sentence gives the
+    US Army spokesman's figures to "المتحدث باسم الحرس الثوري" (the generic "المتحدث باسم" matches).
+    `summarize-refinish SPEC IN OUT` (run_batch.refinish) re-applies the post-processing to a `keep_parts` run.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
