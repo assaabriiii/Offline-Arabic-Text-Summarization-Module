@@ -13,7 +13,7 @@ personal contact details.
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
 | 3b | `03b_style_finetune.ipynb`: continue `arabart_ft` on filtered oddadmix pairs | **done (2026-10-18)**: `models/arabart_ft_style`, dev R1 0.360 (decision 32) |
 | 4b | 04 for the style model | **done (2026-10-19)**: torch INT8 → `models/arabart_ft_style_cpu`, 531 MB, median 12.8 s on 2 vCPUs (decision 34) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.438** XL-Sum-style (acceptance metric, decision 38; CI 0.429–0.448, passes) / 0.376 strict, BERTScore 0.751, other automatic criteria pass. INT8 output varies with the CPU type (decision 37). Human-evaluation sheets written (100 items), waiting for raters |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.439** XL-Sum-style (acceptance metric, decision 38; CI 0.430–0.448, passes) / 0.376 strict, BERTScore 0.751, all automatic criteria pass (decisions 36-39). INT8 output varies with the CPU type (decision 37). Human-evaluation sheets re-written 2026-10-20 (100 items, decision 39), waiting for raters |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -540,6 +540,13 @@ personal contact details.
     240 summaries 29 -> 10 (the rest follow the right speaker). Still missed: NEWS-0034's first sentence gives the
     US Army spokesman's figures to "المتحدث باسم الحرس الثوري" (the generic "المتحدث باسم" matches).
     `summarize-refinish SPEC IN OUT` (run_batch.refinish) re-applies the post-processing to a `keep_parts` run.
+    **05 primary refinished on Colab (commit 72886a9, 2026-10-20; INTERIM references):** the decision-37 raw outputs
+    (AMD run) with the new post-processing; decision-37 outputs, report and the unused rater sheets (no scores
+    filled) moved to `archive_decision37/`. 37 / 240 summaries changed (rejected model sentences 436 -> 457), same as
+    the local refinish. R1 0.376 (CI 0.367–0.386), **XL-Sum-style 0.439 (0.430–0.448), passes > 0.40** (decision 38),
+    R2 0.192, RL 0.239, length 1.000, numbers_ok 1.000, novel 0.008, BERTScore 0.751; latency unchanged (same
+    generation: 6.1 s / 7.6 s median), RAM 1881 MB, size 531 MB. All automatic criteria pass; human criteria pending.
+    New blind human-evaluation sheets written (100 items, `logs/05_evaluate/human_eval/`); report.md / .json updated.
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
