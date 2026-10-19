@@ -206,6 +206,30 @@ def trim_to_words(sentences: Sequence[str], max_words: int, min_words: int = 0) 
     return out
 
 
+def source_order(sentences: Sequence[str], source: Sequence[str]) -> list[str]:
+    """Sort summary sentences by the position of the source sentence each one shares most words with (the
+    fill appends source sentences by rank, so a summary jumped back and forth; PROGRESS 40). A sentence whose
+    speaker is only a pronoun ("وأضاف أن ...") stays right after the sentence it followed, and an unfinished
+    last piece (the fill's word-boundary top-up) stays last."""
+    src = [_tokset(t) for t in source]
+    tail = [sentences[-1]] if sentences and not is_complete(sentences[-1]) else []
+    body = list(sentences[:len(sentences) - len(tail)])
+    blocks: list[list[str]] = []
+    for s in body:
+        if blocks and pronoun_speaker(s):
+            blocks[-1].append(s)
+        else:
+            blocks.append([s])
+
+    def pos(s: str) -> int:
+        t = _tokset(s)
+        # most shared words, then fewest extra words: a copied sentence maps to itself, not to a longer one
+        return max(range(len(src)), key=lambda i: (len(t & src[i]), -len(src[i] - t), -i)) if t and src else 0
+
+    blocks.sort(key=lambda b: pos(b[0]))          # stable: equal positions keep their order
+    return [s for b in blocks for s in b] + tail
+
+
 def to_sentences(texts: Sequence[str]) -> list[str]:
     return [s.text for t in texts for s in split_sentences(t)]
 

@@ -140,6 +140,7 @@ pipeline:
     fill_skip_glued_headings: true   # "اضطراب الساعة البيولوجية إنه ..." (a heading XL-Sum joined to the sentence)
     fill_skip_first_person: singular # none | singular ("التقيت بأمهات ...") | all (also "نحن", an agency's voice)
     fill_skip_pronoun_speaker: true  # "وأوضح أن ..." unless the source's speaker is named in the summary
+    order: source            # source order (PROGRESS 40: dev RL 0.239 -> 0.269) | as_written (model, then the fill by rank)
   faithfulness:              # drop unfaithful model sentences, the fill replaces them (PROGRESS 35-36; summarize/faithful.py)
     enabled: true
     min_support: 0.8         # share of the claim's content stems found in its best support sentences

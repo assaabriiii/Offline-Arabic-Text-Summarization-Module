@@ -312,3 +312,15 @@ def test_fill_skips_pronoun_speaker_unless_named():
     if any(s.startswith("وأوضح أن") for s in sents):
         k = next(i for i, s in enumerate(sents) if s.startswith("وأوضح أن"))
         assert any("الخطيب" in s for s in sents[:k])
+
+
+def test_source_order_keeps_pronoun_speaker_with_its_sentence():
+    from arabic_summ.summarize.postprocess import source_order
+    src = ["أعلنت الحكومة خطة جديدة لدعم المزارعين.", "وقال الوزير سامي الخطيب إن القروض ميسرة.",
+           "وأضاف أن الطلبات تقبل حتى نهاية الشهر.", "ويعمل ربع السكان في الزراعة."]
+    out = ["ويعمل ربع السكان في الزراعة.", "وقال الوزير سامي الخطيب إن القروض ميسرة.", "وأضاف أن الطلبات تقبل حتى نهاية الشهر.",
+           "أعلنت الحكومة خطة جديدة لدعم المزارعين.", "وبدأت الوزارة"]
+    assert source_order(out, src) == [out[3], out[1], out[2], out[0], out[4]]
+    # a copied sentence maps to itself, not to an earlier longer sentence containing its words
+    assert source_order(["ويعمل ربع السكان.", "أعلنت الحكومة."], ["ويعمل ربع السكان في الزراعة.", "أعلنت الحكومة.",
+                                                              "ويعمل ربع السكان."]) == ["أعلنت الحكومة.", "ويعمل ربع السكان."]

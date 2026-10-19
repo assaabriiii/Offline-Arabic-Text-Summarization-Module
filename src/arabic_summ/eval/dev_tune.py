@@ -47,7 +47,7 @@ FAITH_VARIANTS = {
 _D36 = {**_FT, "fill_cover_threshold": 0.5, "fill_skip_titles": True, "fill_number_bonus": 0.3,
         "fill_skip_questions": False, "fill_fix_quotes": False, "fill_strip_leads": False,
         "fill_strip_leads_extended": False, "fill_skip_glued_headings": False, "fill_skip_first_person": "none",
-        "fill_skip_pronoun_speaker": False,
+        "fill_skip_pronoun_speaker": False, "order": "as_written",
         "faithfulness": {**_ON, "max_support_sentences": 1, "attribution_single_source": True,
                          "attribution_window": 2, "attribution_name_match": False,
                          "attribution_latest_speaker": False, "attribution_pronoun": False,
@@ -134,3 +134,6 @@ ROUND3_VARIANTS = {
     "all+plural+fill_pronoun": {**_D37, **_EXT, **_PRON, "fill_skip_first_person": "all",
                                 "fill_skip_pronoun_speaker": True},
 }
+# fourth round (PROGRESS 40): sentence order; on top of the PROGRESS 39 setting
+_D39 = ROUND3_VARIANTS["all+fill_pronoun"]
+ROUND4_VARIANTS = {"d39": _D39, "source_order": {**_D39, "order": "source"}}

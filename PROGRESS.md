@@ -548,6 +548,16 @@ personal contact details.
     generation: 6.1 s / 7.6 s median), RAM 1881 MB, size 531 MB. All automatic criteria pass; human criteria pending.
     New blind human-evaluation sheets written (100 items, `logs/05_evaluate/human_eval/`); report.md / .json updated.
 
+40. **Summary sentences in source order (2026-10-20).** The fill appended source sentences by TextRank rank after
+    the model's sentences, so summaries jumped back and forth (coherence is a human criterion, >= 4).
+    `length_control.order: source` (`postprocess.source_order`) sorts the summary by the source sentence each
+    sentence shares most words with (ties: fewest extra words, so a copied sentence maps to itself); a sentence
+    whose speaker is only a pronoun stays right after the sentence it followed, an unfinished last piece stays last.
+    Dev (90): R1 / xlsum unchanged (0.3778 / 0.4336), RL 0.239 -> 0.269, 70 / 90 summaries reordered, none opens
+    with a pronoun speaker. Benchmark raw outputs (diagnostic): RL 0.239 -> 0.263, 195 / 240 reordered.
+    Known limit: sentences with an implicit subject but no listed speech verb ("وكمثال على ذلك تستشهد ...") can land
+    after another speaker (they could before too).
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 

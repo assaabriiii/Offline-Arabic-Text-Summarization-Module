@@ -35,7 +35,7 @@ from . import extractive
 from .faithful import FaithfulnessChecker, filter_sentences
 from .length import LengthPolicy, allocate, token_bounds
 from .postprocess import (covered, dedup_sentences, drop_unfinished, first_person, fix_quotes, glued_heading,
-                          is_complete, is_meta, is_question, join, pronoun_speaker, strip_lead, to_sentences, trim_to_words)
+                          is_complete, is_meta, is_question, join, pronoun_speaker, source_order, strip_lead, to_sentences, trim_to_words)
 
 STRATEGIES = ("direct", "segmentwise", "hybrid", "extractive", "lead")
 
@@ -90,6 +90,9 @@ class Summarizer:
         self.fill_skip_first_person = lc.get("fill_skip_first_person", "none")
         if self.fill_skip_first_person not in ("none", "singular", "all"):
             raise ValueError("length_control.fill_skip_first_person must be none|singular|all")
+        self.order = lc.get("order", "as_written")
+        if self.order not in ("as_written", "source"):
+            raise ValueError("length_control.order must be as_written|source")
         self.faith = dict(p.get("faithfulness") or {})
 
     # ------------------------------------------------------------------ public
@@ -181,10 +184,14 @@ class Summarizer:
 
     def _finish(self, sentences_out: Sequence[str], sents: Sequence[Sentence], strategy: str, target: int,
                 lo: int, hi: int) -> tuple[list[str], int]:
-        """Length enforcement: trim at a sentence boundary, then the extractive fill for model strategies."""
+        """Length enforcement: trim at a sentence boundary, then the extractive fill for model strategies;
+        `order: source` then puts the sentences in source order (`postprocess.source_order`)."""
         final = trim_to_words(sentences_out, hi, lo)
         if strategy in ("direct", "segmentwise", "hybrid") and self.fill == "extractive":
-            return self._fill(final, sents, lo if self.fill_to == "lo" else target, hi)
+            final, filled = self._fill(final, sents, lo if self.fill_to == "lo" else target, hi)
+            if self.order == "source":
+                final = source_order(final, [s.text for s in sents])
+            return final, filled
         return final, 0
 
     def _units(self, sents: Sequence[Sentence], target: int, strategy: str) -> list[tuple[str, int]]:
