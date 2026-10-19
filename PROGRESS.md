@@ -459,6 +459,25 @@ personal contact details.
     rhetorical questions, datelines ("1 تشرين الأول/ أكتوبر 2026 -"), heading lines glued to a sentence.
     Not run yet: BERTScore, human-eval sheets, report (cells 7/8/10) — pending a second tuning round on these points.
 
+37. **Second filter / fill round, on the dev set (2026-10-19, commit e76cac2).** Fixes for the decision-36 spot check:
+    - negation: the governed words stop at the next punctuation ("دون تأخير لا داعي له، تدعم" no longer negates
+      "تدعم"; ORG-0139's correct lead sentence now passes);
+    - attribution: window 2 → 3; `attribution_name_match` (speaker named by a rare word in the latest speaker
+      phrase near the support sentence, description found earlier: "قال ليونز إن" → "الخبير الاقتصادي البريطاني
+      جيرارد ليونز"); `attribution_latest_speaker` (rejected if that latest speaker phrase names someone else);
+    - fill: `fill_skip_questions`; `fill_strip_leads` (datelines in the first 3 sentences, quoted crossheads such
+      as '"مهمة مجتمع" وعوضا'); `fill_fix_quotes` (a quote split across sentences is closed / opened when a
+      speaker is named, else the piece is skipped). The number bonus is still computed on the original sentence.
+    Dev (90 texts, `dev_tune.ROUND2_VARIANTS`): decision 36 R1 0.380 / xlsum 0.436 / R2 0.197 → selected
+    (`clean+name+win3+latest`) 0.379 / 0.435 / 0.198, length 1.000, numbers 1.000; ROUGE-neutral (within ±0.002),
+    chosen by reading the changed sentences. Windows 4 / unlimited were rejected: they also kept wrong speakers
+    (Kenyatta for "Kenyan officials", the Eurogroup head for a Greenspan quote). Speaker rules: 3 correct sentences
+    recovered (Lyons, Criado Perez, Chepkoech), 1 borderline one newly rejected (NEWS-0031 "Israel says" for
+    "Netanyahu said the report shows"). Fill cleanup changed 31 dev texts: questions, datelines and crossheads gone,
+    ~20 split quotes repaired. Still not caught: unquoted headings glued to a sentence ("اضطراب الساعة البيولوجية
+    إنه ..."), datelines without a digit/comma later in a text.
+    Next: 05 CPU re-run on the 240 texts (decision-36 outputs → `archive_decision36/`), then cells 7/8/10.
+
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
 
