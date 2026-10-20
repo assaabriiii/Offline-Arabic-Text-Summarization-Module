@@ -557,6 +557,21 @@ personal contact details.
     with a pronoun speaker. Benchmark raw outputs (diagnostic): RL 0.239 -> 0.263, 195 / 240 reordered.
     Known limit: sentences with an implicit subject but no listed speech verb ("وكمثال على ذلك تستشهد ...") can land
     after another speaker (they could before too).
+    **05 refinish on Colab (commit 2decd38, 2026-10-20), PARTLY DONE:** decision-39 outputs, report and the unused
+    rater sheets moved to `archive_decision39/`; primary refinished (195 / 240 reordered) and cells 6-7 written
+    (`scored.csv` / `summary.csv`: R1 0.376, xlsum 0.439 (0.430–0.448), RL 0.263, length 1.0, numbers_ok 1.0). The
+    runtime disconnected during BERTScore: **cells 8-11 (BERTScore, new human-eval sheets, report) still to run**, so
+    there are no rater sheets on Drive and `report.md` is the decision-39 one. To resume: loader at 2decd38, cells
+    1-2, 3-4, the refinish again (deterministic), 6-7, 8-11.
+    Spot check of the final summaries (Claude, single reviewer, small samples): 10 random summaries — fluent (copied
+    sentences), coherence fair (stitched excerpts, dangling "هذا", added "ومع ذلك"), coverage usually misses one key
+    point, 2 / 10 with a clear factual error in a model sentence (NEWS-0084 school closure dated "last week",
+    ORG-0169 "72000 killed in 2023" for "more than 72000 since October 2023"). 20 random rewritten sentences (328 in 168
+    summaries): 11 faithful, 6 minor distortions, 3 clear errors (NEWS-0074 Lufthansa dropped as "French airlines",
+    NEWS-0102 Russia's call given to "the major powers", ORG-0170 garbled repetition). Estimate: 15–20 % of summaries
+    with a clear error (dates / names / attribution) — at the human-evaluation threshold (>= 80 % without critical
+    errors); coverage / coherence >= 4 look at risk. 90 % of summary sentences are >= 85 % copies of one source
+    sentence; the summary beats lead on 56 % of texts (xlsum R1).
 
 ## Benchmark report must also record (proposal §7)
 CPU model, thread count, OS version, warm-up time, and per-sample input length. This goes into `bench/` later.
@@ -609,7 +624,8 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - 03 → 03b → 04 → 05 have all run (decisions 24–34). Docs: `README.md`, `docs/architecture.md`, `docs/README.fa.md`.
 - Team: human review of all 240 reference drafts (guideline §1a/§6), then `benchmark-validate --strict`,
   `approved_only: true`, re-run 05 for final (non-interim) numbers.
-- Two raters fill `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
+- Finish 05 cells 8-11 for decision 40 (BERTScore, new rater sheets, report; see decision 40), then two raters fill
+  `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
 - Project lead: XL-Sum-style ROUGE approved (decision 38); still to approve: AI-drafted references, oddadmix (no
   license, research use), the extractive length fill (~47 % of words after the faithfulness filter).
 - Official numbers from the reference machine: the INT8 model's output depends on the CPU (decision 37), so run 05's
