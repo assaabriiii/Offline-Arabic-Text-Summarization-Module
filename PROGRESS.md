@@ -13,7 +13,7 @@ personal contact details.
 | 4 | `04_optimize.ipynb`: PyTorch/ONNX × FP32/INT8, isolated CPU measurement, proposal gates + composite score, export | **done on Colab CPU (2026-10-18)**: selected **PyTorch dynamic INT8** → `models/arabart_ft_cpu` (R1 0.305, median 11.1 s on 2 vCPUs, 1.9 GB RSS). ONNX INT8 missed the latency gate by 0.11 s on 2 vCPUs: re-check both on the 8-core reference machine (decision 25) |
 | 3b | `03b_style_finetune.ipynb`: continue `arabart_ft` on filtered oddadmix pairs | **done (2026-10-18)**: `models/arabart_ft_style`, dev R1 0.360 (decision 32) |
 | 4b | 04 for the style model | **done (2026-10-19)**: torch INT8 → `models/arabart_ft_style_cpu`, 531 MB, median 12.8 s on 2 vCPUs (decision 34) |
-| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-19, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter (decisions 36-37): R1 **0.439** XL-Sum-style (acceptance metric, decision 38; CI 0.430–0.448, passes) / 0.376 strict, BERTScore 0.751, all automatic criteria pass (decisions 36-39). INT8 output varies with the CPU type (decision 37). Human-evaluation sheets re-written 2026-10-20 (100 items, decision 39), waiting for raters |
+| 5 | `05_evaluate.ipynb`: all systems on 240 texts, ROUGE with CIs, length, fact check, latency, BERTScore, blind human evaluation + kappa, acceptance table, report | **automatic part done (2026-10-20, interim references)**: primary `cpu_torch_int8_direct` with the faithfulness filter and fill cleanup (decisions 36-40): R1 **0.439** XL-Sum-style (acceptance metric, decision 38; CI 0.430–0.448, passes) / 0.376 strict, RL 0.263, BERTScore 0.754, summaries in source order (decision 40), all automatic criteria pass. INT8 output varies with the CPU type (decision 37). Human-evaluation sheets re-written 2026-10-20 (100 items, decision 40), ready for raters |
 | 6 | MVP: CLI + Gradio, `bench/` offline CPU runner | **built** (`python -m arabic_summ summarize|serve`, `bench/run_bench.py`); tested on a tiny model in the pinned runtime env; needs the exported model from 04 |
 | — | Benchmark items (240 texts) | automated: 120 news (XL-Sum test) + 120 org reports (WHO EMRO / UNICEF MENA / UNFPA / UN Women AS), seeded selection |
 | — | Benchmark reference summaries | **240 model drafts done** (`llm_draft`, pending); **human review outstanding** (decision 16) |
@@ -557,12 +557,14 @@ personal contact details.
     with a pronoun speaker. Benchmark raw outputs (diagnostic): RL 0.239 -> 0.263, 195 / 240 reordered.
     Known limit: sentences with an implicit subject but no listed speech verb ("وكمثال على ذلك تستشهد ...") can land
     after another speaker (they could before too).
-    **05 refinish on Colab (commit 2decd38, 2026-10-20), PARTLY DONE:** decision-39 outputs, report and the unused
-    rater sheets moved to `archive_decision39/`; primary refinished (195 / 240 reordered) and cells 6-7 written
-    (`scored.csv` / `summary.csv`: R1 0.376, xlsum 0.439 (0.430–0.448), RL 0.263, length 1.0, numbers_ok 1.0). The
-    runtime disconnected during BERTScore: **cells 8-11 (BERTScore, new human-eval sheets, report) still to run**, so
-    there are no rater sheets on Drive and `report.md` is the decision-39 one. To resume: loader at 2decd38, cells
-    1-2, 3-4, the refinish again (deterministic), 6-7, 8-11.
+    **05 refinish on Colab (commit 2decd38, 2026-10-20), done:** decision-39 outputs, report and the unused rater
+    sheets moved to `archive_decision39/`; primary refinished (195 / 240 reordered). R1 0.376, **xlsum 0.439
+    (0.430–0.448), passes**, R2 0.192, RL 0.263 (0.239 before), length 1.000, numbers_ok 1.000, novel 0.008,
+    **BERTScore 0.754** (0.751 before; ft_style_direct 0.751, extractive 0.745, lead 0.744, baseline 0.729); latency,
+    RAM, size unchanged (same generation). All automatic criteria pass; human criteria pending. Only the browser link
+    to Colab dropped during BERTScore: the runtime finished cells 8-11 by itself (report.md / .json with BERTScore,
+    new sheets). Checked from Drive: 100 items (50 news / 50 org, 20 calibration), rater_A = rater_B, no scores
+    filled, all 100 summaries identical to the decision-40 outputs (21 also equal decision 39's).
     Spot check of the final summaries (Claude, single reviewer, small samples): 10 random summaries — fluent (copied
     sentences), coherence fair (stitched excerpts, dangling "هذا", added "ومع ذلك"), coverage usually misses one key
     point, 2 / 10 with a clear factual error in a model sentence (NEWS-0084 school closure dated "last week",
@@ -624,8 +626,8 @@ CPU model, thread count, OS version, warm-up time, and per-sample input length. 
 - 03 → 03b → 04 → 05 have all run (decisions 24–34). Docs: `README.md`, `docs/architecture.md`, `docs/README.fa.md`.
 - Team: human review of all 240 reference drafts (guideline §1a/§6), then `benchmark-validate --strict`,
   `approved_only: true`, re-run 05 for final (non-interim) numbers.
-- Finish 05 cells 8-11 for decision 40 (BERTScore, new rater sheets, report; see decision 40), then two raters fill
-  `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv`; then 05 cell 9 + acceptance.
+- Two raters fill `logs/05_evaluate/human_eval/rater_A.csv` / `rater_B.csv` (decision-40 sheets, ready
+  2026-10-20; raters must not open `key.csv`); then 05 cells "9. Human results" and "10. Acceptance table + report".
 - Project lead: XL-Sum-style ROUGE approved (decision 38); still to approve: AI-drafted references, oddadmix (no
   license, research use), the extractive length fill (~47 % of words after the faithfulness filter).
 - Official numbers from the reference machine: the INT8 model's output depends on the CPU (decision 37), so run 05's
